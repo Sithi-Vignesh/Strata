@@ -110,7 +110,8 @@ A clean conceptual separation is maintained between:
 | `StrataEngine` Core Class | **Implemented (Phase 0)** | Lifecycle initialization, status reporting, execute() placeholder |
 | `EngineAdapter` | **Implemented (Phase 0)** | In-process boundary between backend and engine |
 | `GET /health` Endpoint | **Implemented (Phase 0)** | Validated HTTP 200 endpoint returning engine status JSON |
-| Page-Oriented Disk Storage | *Planned (Phase 1)* | Slotted pages, page serialization, file manager |
+| Fixed-Size Pages & Page File Storage | **Implemented (Phase 1)** | Fixed-size 4096-byte pages, PageId, PageFile manager |
+| Slotted Page Record Storage | *Planned (Phase 2)* | Slotted page headers, record pointers, tuple serialization |
 | Buffer Pool Manager | *Planned* | In-memory frame management and page replacement |
 | System Catalog | *Planned* | Metadata storage for schemas and table definitions |
 | SQL Lexer & Parser | *Planned* | Tokenization and AST generation for subset of SQL |

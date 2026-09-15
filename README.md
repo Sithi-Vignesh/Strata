@@ -13,25 +13,30 @@ The long-term objective of Strata is to demonstrate core database management sys
 
 ---
 
-## 2. Project Status: Phase 0 — Repository Foundation
+## 2. Project Status: Phase 1 — Core Storage Engine Foundation
 
-**Strata is currently in Phase 0.**
+**Strata is currently in Phase 1.**
 
-In Phase 0, the repository foundation, packaging, architecture boundaries, and health check communication flow are established and verified.
+Phase 1 establishes the foundational disk-backed storage engine for Strata.
 
-### What is Implemented in Phase 0:
-- **`strata_engine`**: A minimal `StrataEngine` class with deterministic status reporting and explicit placeholder interface for SQL execution.
-- **`strata_backend`**: A FastAPI application providing `GET /health`.
-- **`EngineAdapter`**: An in-process boundary adapter allowing the FastAPI backend to query `StrataEngine` status without coupling to engine internals.
-- **Automated Tests**: Comprehensive `pytest` test suite covering engine initialization, status determinism, placeholder behavior, and backend health endpoint responses.
+### What is Implemented:
+- **`strata_engine.storage`**:
+  - `PAGE_SIZE`: Authoritative 4096-byte page size.
+  - `Page`: Fixed-size 4096-byte binary page abstraction with strict size validation and immutability.
+  - `PageId`: Non-negative page identifier mapping directly to offset $\text{PageId} \times 4096$.
+  - `PageFile`: Disk-backed page storage manager supporting deterministic zero-fill allocation, random access read/write, file reopening/recovery, and corruption detection.
+  - Storage Exceptions: `PageSizeError`, `InvalidPageIdError`, `PageNotFoundError`, `StorageClosedError`, `StorageCorruptionError`.
+- **`strata_engine`**: Minimal `StrataEngine` class with status reporting and `execute()` interface placeholder.
+- **`strata_backend`**: FastAPI application providing `GET /health`.
+- **`EngineAdapter`**: In-process adapter bridging backend routes and the database engine.
+- **Automated Tests**: 36 unit and integration tests across storage operations, engine lifecycle, and health endpoints.
 - **Packaging**: Standard src-based layout with `pyproject.toml` supporting editable installation.
-- **Documentation**: Architecture specifications and developer setup guides.
+- **Documentation**: Architecture specifications, developer setup guides, and detailed storage engine documentation (`docs/storage.md`).
 
-### What is Intentionally NOT Implemented in Phase 0:
-Phase 0 does not implement any actual database engine internals or frontend applications:
-- No page-oriented storage or slotted page records
-- No disk database files or file manager
-- No buffer pool manager or page eviction
+### What is Intentionally NOT Implemented in Phase 1:
+Phase 1 does not implement higher-level database engine components or frontend applications:
+- No slotted page record formatting or tuple serialization
+- No buffer pool manager or frame eviction algorithms
 - No system catalog or table schemas
 - No SQL lexer, parser, or AST generation
 - No query execution engine or relational algebra iterators
@@ -156,9 +161,9 @@ curl http://127.0.0.1:8000/health
 
 ---
 
-## 6. Next Planned Phase: Phase 1 — Storage Engine Foundation
+## 6. Next Planned Phase: Phase 2 — Slotted Page Record Storage
 
-With Phase 0 verified, the planned next phase will focus on:
-- Designing a page-based binary storage format (fixed-size pages, slotted page architecture).
-- Implementing serialization and deserialization of records into binary page buffers.
-- Building a disk File Manager to allocate, read, and write pages safely to persistent files in the `data/` directory.
+With Phase 1 verified, the planned next phase will focus on:
+- Designing a slotted page binary architecture with slot directories (record offsets and lengths).
+- Implementing serialization and deserialization of variable-length and fixed-length data records into page byte buffers.
+- Building record management primitives (insert, read, update, delete records within pages) and defragmentation.
