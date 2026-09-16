@@ -13,11 +13,11 @@ The long-term objective of Strata is to demonstrate core database management sys
 
 ---
 
-## 2. Project Status: Phase 2 — Record and Slotted-Page Storage Layer
+## 2. Project Status: Phase 3 — Buffer Pool Management
 
-**Strata is currently in Phase 2.**
+**Strata is currently in Phase 3.**
 
-Phase 2 establishes the record-oriented storage layer on top of fixed-size pages.
+Phase 3 introduces in-memory buffer pool management with deterministic page eviction, mediating between disk storage and in-memory page structures.
 
 ### What is Implemented:
 - **`strata_engine.storage`**:
@@ -27,17 +27,20 @@ Phase 2 establishes the record-oriented storage layer on top of fixed-size pages
   - `PageFile`: Disk-backed page storage manager supporting deterministic zero-fill allocation, random access read/write, file reopening/recovery, and corruption detection.
   - `RecordId`: Identifies records via `(page_id, slot_id)` with validation and hashing.
   - `SlottedPage`: Big-Endian binary slotted-page format with 8-byte header, 4-byte slot directory entries growing forward, and record byte payloads growing backward. Supports variable-length record insertion, retrieval, deletion, and defragmentation compaction with stable slot IDs.
-  - Storage Exceptions: `PageSizeError`, `InvalidPageIdError`, `PageNotFoundError`, `StorageClosedError`, `StorageCorruptionError`, `RecordSizeError`, `RecordNotFoundError`, `InsufficientSpaceError`, `InvalidSlotIdError`, `SlottedPageCorruptionError`.
+  - `ClockReplacer`: Deterministic CLOCK (Second-Chance) replacement policy tracking unpinned frames.
+  - `Frame`: Buffer frame descriptor tracking resident page, pin count, dirty status, and lifecycle.
+  - `BufferPoolManager`: Fixed-capacity buffer pool manager mediating page fetch, allocation, pin/unpin reference counting, dirty page tracking, automatic writeback on eviction, and safe flushing.
+  - Storage Exceptions: `PageSizeError`, `InvalidPageIdError`, `PageNotFoundError`, `StorageClosedError`, `StorageCorruptionError`, `RecordSizeError`, `RecordNotFoundError`, `InsufficientSpaceError`, `InvalidSlotIdError`, `SlottedPageCorruptionError`, `BufferPoolFullError`, `PageNotCachedError`, `InvalidPinCountError`.
 - **`strata_engine`**: Minimal `StrataEngine` class with status reporting and `execute()` interface placeholder.
 - **`strata_backend`**: FastAPI application providing `GET /health`.
 - **`EngineAdapter`**: In-process adapter bridging backend routes and the database engine.
-- **Automated Tests**: 67 unit and integration tests across slotted pages, storage operations, engine lifecycle, and health endpoints.
+- **Automated Tests**: 126 unit and integration tests across buffer pool management, clock replacement, slotted pages, storage operations, engine lifecycle, and health endpoints.
 - **Packaging**: Standard src-based layout with `pyproject.toml` supporting editable installation.
 - **Documentation**: Architecture specifications, developer setup guides, and detailed storage engine documentation (`docs/storage.md`).
 
-### What is Intentionally NOT Implemented in Phase 2:
-Phase 2 does not implement higher-level database engine components or frontend applications:
-- No buffer pool manager or frame eviction algorithms
+### What is Intentionally NOT Implemented in Phase 3:
+Phase 3 does not implement higher-level database engine components or frontend applications:
+- No heap files, page directories, or multi-page table collections (Planned: Phase 4)
 - No system catalog or table schemas
 - No SQL lexer, parser, or AST generation
 - No query execution engine or relational algebra iterators
@@ -162,10 +165,11 @@ curl http://127.0.0.1:8000/health
 
 ---
 
-## 6. Next Planned Phase: Phase 3 — Buffer Pool Manager
+## 6. Next Planned Phase: Phase 4 — Heap File Storage & Free-Space Management
 
-With Phase 2 verified, the planned next phase will focus on:
-- In-memory buffer frame management and fixed-size frame pool allocation.
-- Page pin/unpin tracking and dirty page status management.
-- Buffer replacement algorithms (Clock / Second-Chance / LRU) to evict unpinned pages safely.
-- Transparent buffer manager interface mediating all page requests between execution iterators and the disk storage engine.
+With Phase 3 verified, the planned next phase will focus on:
+- Multi-page table abstraction (`HeapFile`) spanning arbitrary numbers of slotted pages.
+- Page directory and free-space tracking to route record insertions to pages with sufficient space.
+- Table scans iterating across records and pages via the `BufferPoolManager`.
+- Record insertion, lookup, and deletion by `RecordId` across multi-page files.
+

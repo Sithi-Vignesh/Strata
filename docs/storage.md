@@ -1,6 +1,6 @@
-# Strata Storage Engine — Storage Foundation & Slotted-Page Layer
+# Strata Storage Engine — Storage Foundation, Slotted Pages & Buffer Management
 
-This document describes the design, architecture, binary layout, and usage of Strata's disk-backed storage engine (`strata_engine.storage`), covering Phase 1 (raw block I/O) and Phase 2 (slotted-page record storage).
+This document describes the design, architecture, binary layout, and usage of Strata's disk-backed storage engine (`strata_engine.storage`), covering Phase 1 (raw block I/O), Phase 2 (slotted-page record storage), and Phase 3 (in-memory buffer pool management).
 
 ---
 
@@ -133,14 +133,18 @@ StorageError (Base)
 ├── PageSizeError               # Raw data length != PAGE_SIZE (4096)
 ├── InvalidPageIdError           # Page ID is negative, bool, or non-int
 ├── PageNotFoundError            # Page ID not yet allocated in storage file
-├── StorageClosedError           # Operation attempted on closed PageFile
+├── StorageClosedError           # Operation attempted on closed PageFile or BufferPoolManager
 ├── StorageCorruptionError       # File size or binary layout invariant violated
 │   └── SlottedPageCorruptionError  # Malformed magic, bad slot offset, or overlapping records
 ├── RecordSizeError             # Record exceeds maximum page capacity (4084 bytes)
 ├── RecordNotFoundError          # Slot ID is deleted or unallocated
 ├── InsufficientSpaceError       # Page cannot fit record even after compaction
-└── InvalidSlotIdError           # Slot ID is negative, bool, or out of range
+├── InvalidSlotIdError           # Slot ID is negative, bool, or out of range
+├── BufferPoolFullError         # All buffer pool frames are pinned; cannot accommodate new page
+├── PageNotCachedError          # Page is not currently resident in the buffer pool
+└── InvalidPinCountError        # Invalid pin operation (e.g. unpinning at pin_count == 0)
 ```
+
 
 ---
 
@@ -188,12 +192,61 @@ When parsing an existing page (`SlottedPage.from_page(page)`):
 
 ---
 
-## 8. Running the Storage Test Suite
+## 8. Buffer Pool Management (`BufferPoolManager`)
 
-Run the full storage test suite:
+Phase 3 introduces the in-memory **Buffer Pool Manager** (`strata_engine.storage.BufferPoolManager`), which mediates between physical block I/O (`PageFile`) and memory-resident page operations (`Page` and `SlottedPage`).
+
+### 8.1 Core Responsibilities
+- **Fixed Capacity**: Allocates a fixed number of in-memory frames (`pool_size`), bounding total engine memory footprint.
+- **Pin / Unpin Lifecycle**:
+  - `fetch_page(page_id)` loads or looks up a page and increments its `pin_count`.
+  - `unpin_page(page_id, is_dirty=...)` decrements `pin_count` and records modifications.
+  - A frame with `pin_count > 0` is **pinned** and cannot be evicted.
+- **CLOCK (Second-Chance) Replacement**:
+  - When all frames are full and a new page is requested, the `ClockReplacer` scans unpinned candidate frames.
+  - Frames with active reference bits are given a second chance (bit cleared to 0); frames with bit 0 are evicted.
+  - If all frames are pinned, `BufferPoolFullError` is raised.
+- **Transparent Write-Back**:
+  - Clean evicted frames are dropped immediately without I/O.
+  - Dirty evicted frames are automatically flushed to `PageFile.write_page()` before frame reuse.
+  - Explicit synchronization is supported via `flush_page(pid)`, `flush_all()`, and automatic flushing on `close()`.
+
+### 8.2 End-to-End Example with BufferPoolManager and SlottedPage
+
+```python
+from pathlib import Path
+from strata_engine.storage import PageFile, BufferPoolManager, SlottedPage
+
+db_path = Path("data/example.db")
+
+with PageFile(db_path) as pf:
+    with BufferPoolManager(pf, pool_size=5) as bpm:
+        # 1. Allocate a new page through the buffer manager
+        pid, page = bpm.new_page()
+
+        # 2. Format as SlottedPage and insert records
+        sp = SlottedPage(page_id=pid)
+        slot0 = sp.insert_record(b"Task: High-priority item")
+        page._data[:] = sp.to_bytes()
+
+        # 3. Unpin as dirty so it persists
+        bpm.unpin_page(pid, is_dirty=True)
+
+        # 4. Fetch the page later (from memory or reloaded from disk after eviction)
+        cached_page = bpm.fetch_page(pid)
+        recovered_sp = SlottedPage.from_page(cached_page, page_id=pid)
+        assert recovered_sp.get_record(slot0) == b"Task: High-priority item"
+        bpm.unpin_page(pid, is_dirty=False)
+```
+
+---
+
+## 9. Running the Storage Test Suite
+
+Run the storage test suite including the buffer pool:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_storage.py tests/test_slotted_page.py -v
+.\.venv\Scripts\python.exe -m pytest tests/test_storage.py tests/test_slotted_page.py tests/test_buffer_pool.py -v
 ```
 
 Run all tests in the repository:
@@ -201,3 +254,4 @@ Run all tests in the repository:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -v
 ```
+

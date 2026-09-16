@@ -47,3 +47,16 @@ class InvalidSlotIdError(StorageError):
 
 class SlottedPageCorruptionError(StorageCorruptionError):
     """Raised when a slotted page binary layout violates structure invariants."""
+
+
+class BufferPoolFullError(StorageError):
+    """Raised when all buffer pool frames are pinned and a new page cannot be accommodated."""
+
+
+class PageNotCachedError(StorageError):
+    """Raised when an operation targets a page that is not currently resident in the buffer pool."""
+
+
+class InvalidPinCountError(StorageError):
+    """Raised when an invalid pin count operation occurs (such as unpinning an unpinned page)."""
+
