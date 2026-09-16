@@ -282,18 +282,102 @@ with PageFile(db_path) as pf:
 
 ---
 
-## 10. Running the Storage Test Suite
+## 10. System Catalog, Schema & Tuple Serialization (Phase 5)
 
-Run the full storage test suite including heap file tests:
+Phase 5 introduces structured relational typing, binary tuple serialization, table metadata, and a persistent system catalog on top of the Phase 4 `HeapFile` storage layer.
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_storage.py tests/test_slotted_page.py tests/test_buffer_pool.py tests/test_heap_file.py -v
+### 10.1 Layering Architecture
+
+```text
+StrataEngine (engine.py)
+   │
+   ▼
+Catalog (catalog/catalog.py)
+   │ [Manages tables.db, columns.db, and table_{id}.db mappings]
+   ▼
+Table (catalog/table.py)
+   │ [Typed insert, get, delete, scan over HeapFile]
+   ▼
+TupleSerializer (schema/serializer.py) + Schema (schema/schema.py)
+   │ [Deterministic packing, CRC32 fingerprinting, null bitmap]
+   ▼
+Tuple (schema/tuple.py)
+   │ [Immutable typed row values]
+   ▼
+HeapFile (storage/heap_file.py)
+   │ [Opaque variable-length byte record storage]
+   ▼
+SlottedPage / BufferPoolManager / PageFile / Disk
 ```
 
-Run all tests in the repository:
+### 10.2 Binary Record Layout
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest -v
+```text
++-------------------------------------------------------------------------------+
+| RECORD HEADER (Fixed 6 bytes + Null Bitmap)                                   |
+|  - column_count        : 2 bytes (uint16, >H)                                 |
+|  - schema_fingerprint  : 4 bytes (uint32, >I, CRC32 over canonical spec)      |
+|  - null_bitmap         : ceil(column_count / 8) bytes (LSB-first)             |
++-------------------------------------------------------------------------------+
+| ATTRIBUTE PAYLOAD AREA (in schema ordinal order)                              |
+|  For each column i from 0 to column_count - 1:                                |
+|    If null_bitmap[i] == 1 (NULL): 0 bytes                                     |
+|    If null_bitmap[i] == 0 (NOT NULL):                                         |
+|      INTEGER : 4 bytes (>i, signed 32-bit int)                                |
+|      BIGINT  : 8 bytes (>q, signed 64-bit int)                                |
+|      FLOAT   : 8 bytes (>d, IEEE 754 binary64)                                |
+|      BOOLEAN : 1 byte  (0x00 = False, 0x01 = True)                            |
+|      VARCHAR : 2 bytes length L (>H, uint16) + L bytes of UTF-8 text          |
++-------------------------------------------------------------------------------+
 ```
 
+- Total record size cannot exceed `MAX_RECORD_SIZE = 4084` bytes.
 
+### 10.3 End-to-End Example with StrataEngine, Schema, and Table
+
+```python
+from pathlib import Path
+from strata_engine import Column, DataType, Schema, StrataEngine
+
+db_dir = Path("data/app_db")
+
+# 1. Define schema
+schema = Schema([
+    Column("user_id", DataType.INTEGER, nullable=False),
+    Column("username", DataType.VARCHAR, nullable=False, max_length=50),
+    Column("score", DataType.FLOAT, nullable=True),
+])
+
+# 2. Open engine and create table
+with StrataEngine(db_dir) as engine:
+    users = engine.create_table("users", schema)
+
+    # 3. Insert typed records
+    r0 = users.insert([1, "Alice", 98.5])
+    r1 = users.insert([2, "Bob", None])
+
+    # 4. Retrieve by RecordId
+    row0 = users.get(r0)
+    assert row0["username"] == "Alice"
+    assert row0["score"] == 98.5
+
+    # 5. Sequential scan
+    for rid, row in users.scan():
+        print(f"Record {rid}: id={row['user_id']}, name={row['username']}")
+
+# 6. Reopen engine and verify persistence
+with StrataEngine(db_dir) as engine_reopened:
+    assert engine_reopened.has_table("users")
+    users = engine_reopened.get_table("users")
+    assert users.count() == 2
+```
+
+---
+
+## 11. Running the Full Test Suite
+
+Run the full storage, schema, and catalog test suite:
+
+```powershell
+python -m pytest -v
+```

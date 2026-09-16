@@ -114,11 +114,66 @@ A clean conceptual separation is maintained between:
 | Slotted Page Record Storage | **Implemented (Phase 2)** | Slotted page headers, slot directories, compaction, RecordId |
 | Buffer Pool Manager | **Implemented (Phase 3)** | In-memory frame pool, ClockReplacer, pin/unpin tracking, dirty writeback |
 | Heap File Storage | **Implemented (Phase 4)** | Multi-page record collection, first-fit allocation, RecordId routing, leak-proof scan |
-| System Catalog | *Planned (Phase 5)* | Metadata storage for schemas and table definitions |
-| SQL Lexer & Parser | *Planned* | Tokenization and AST generation for subset of SQL |
-| Query Execution Engine | *Planned* | Volcano-style iterator model (Scan, Filter, Project, Join) |
-| B+ Tree Indexing | *Planned* | Page-backed tree indexing for efficient point & range lookups |
+| System Catalog & Schema | **Implemented (Phase 5)** | Persistent metadata, schemas, typed Tuples, binary serialization, Table abstraction |
+| SQL Lexer & Parser | *Planned (Phase 6)* | Tokenization and AST generation for subset of SQL |
+| Query Execution Engine | *Planned (Phase 7)* | Volcano-style iterator model (Scan, Filter, Project, Join) |
+| B+ Tree Indexing | *Planned (Phase 8)* | Page-backed tree indexing for efficient point & range lookups |
+| Transactions & Concurrency | *Planned (Phase 9)* | Strict 2PL, shared/exclusive locks, WAL, deadlock detection |
 | Query Optimizer & EXPLAIN | *Planned* | Cost-based / heuristic query planning and plan visualization |
-| Transactions & Concurrency | *Planned* | Strict 2PL, shared/exclusive locks, deadlock detection |
 | Workspace & Task Backend | *Planned* | Domain entities, auth, task management logic |
 | Web Frontend | *Planned* | User interface for projects and tasks |
+
+---
+
+## 7. Phase 5 Architecture: System Catalog, Schema, and Table Metadata
+
+Phase 5 bridges low-level opaque page storage and high-level relational operations by introducing structured typing, binary serialization, table abstractions, and a persistent system catalog.
+
+### Layered Architecture
+
+```text
+StrataEngine (engine.py)
+   │
+   ▼
+Catalog (catalog/catalog.py)
+   │ [Persistent metadata, tables.db, columns.db, HWM allocation]
+   ▼
+Table (catalog/table.py)
+   │ [Typed insert, get, delete, scan, count over HeapFile]
+   ▼
+TupleSerializer (schema/serializer.py) + Schema (schema/schema.py)
+   │ [Strict typing, big-endian binary packing, CRC32 fingerprinting, null bitmap]
+   ▼
+Tuple (schema/tuple.py)
+   │ [Immutable typed row container]
+   ▼
+HeapFile (storage/heap_file.py)
+   │ [Opaque variable-length byte record collection]
+   ▼
+BufferPoolManager (storage/buffer_pool.py)
+   │ [Fixed-capacity page cache & CLOCK eviction]
+   ▼
+SlottedPage (storage/slotted_page.py)
+   │ [Fixed 4096-byte slotted page layout]
+   ▼
+PageFile (storage/page_file.py)
+   │ [Direct 4096-byte block I/O]
+   ▼
+Disk
+```
+
+### Key Phase 5 Invariants
+
+1. **Strict Relational Types**: `DataType` supports exactly `INTEGER` (signed 32-bit), `BIGINT` (signed 64-bit), `FLOAT` (IEEE-754 binary64), `BOOLEAN` (strict bool), and `VARCHAR` (Unicode code-point limit $1 \le N \le 4080$).
+2. **Deterministic Schema Fingerprint**: 32-bit unsigned CRC32 computed over canonical ASCII specification strings. Detects schema mismatches instantly.
+3. **Binary Record Layout**:
+   - 2B `column_count` + 4B `schema_fingerprint` + $\lceil \text{cols}/8 \rceil$B `null_bitmap` + ordinal payload.
+   - Fits strictly within `MAX_RECORD_SIZE = 4084` bytes.
+4. **Physical Directory Layout**:
+   - `<data_dir>/catalog/tables.db` and `<data_dir>/catalog/columns.db`.
+   - `<data_dir>/tables/table_{table_id}.db` where `table_id >= 1`.
+5. **Persistent Monotonic High-Water Mark (HWM)**:
+   - Header record `table_id = 0` in `tables.db` stores `STRATA_CATALOG_V1:HWM=<id>`.
+   - Table IDs are strictly monotonic and never reused, even after table deletion.
+   - Startup reconciles persisted HWM with orphan physical files to prevent ID collisions.
+6. **Strict Error Model**: Separated hierarchies for `StorageError`, `SchemaError`, `SerializationError`, and `CatalogError`. Schema code has zero imports from storage.

@@ -71,3 +71,111 @@ def test_engine_does_not_claim_sql_execution() -> None:
         engine.execute("SELECT 1;")
 
     assert "SQL execution is not implemented in Phase 0" in str(exc_info.value)
+
+
+# ============================================================================
+# Phase 5: Engine Lifecycle & Table Access Tests
+# ============================================================================
+
+
+def test_engine_lifecycle_open_close(tmp_path: Path) -> None:
+    """Verify open and close lifecycle transitions and status reporting."""
+    from strata_engine.storage import StorageClosedError
+
+    engine = StrataEngine(data_dir=tmp_path)
+    assert engine.is_open is False
+    assert engine.status()["status"] == "initialized"
+
+    engine.open()
+    assert engine.is_open is True
+    assert engine.status()["status"] == "open"
+    assert engine.catalog is not None
+
+    # Redundant open is a safe no-op
+    engine.open()
+    assert engine.is_open is True
+
+    engine.close()
+    assert engine.is_open is False
+    assert engine.status()["status"] == "initialized"
+
+    with pytest.raises(StorageClosedError):
+        _ = engine.catalog
+
+
+def test_engine_open_without_data_dir_raises() -> None:
+    """Verify opening StrataEngine without a configured data_dir raises StorageClosedError."""
+    from strata_engine.storage import StorageClosedError
+
+    engine = StrataEngine()
+    with pytest.raises(StorageClosedError) as exc_info:
+        engine.open()
+    assert "without a configured data_dir" in str(exc_info.value)
+
+
+def test_engine_context_manager(tmp_path: Path) -> None:
+    """Verify StrataEngine context manager opens on enter and closes on exit."""
+    from strata_engine.schema import Column, DataType, Schema
+
+    schema = Schema([Column("id", DataType.INTEGER, nullable=False)])
+
+    with StrataEngine(data_dir=tmp_path) as engine:
+        assert engine.is_open is True
+        tbl = engine.create_table("items", schema)
+        rid = tbl.insert([42])
+        assert tbl.get(rid)["id"] == 42
+        assert engine.list_tables() == ["items"]
+
+    assert engine.is_open is False
+
+
+def test_engine_table_delegators_and_persistence(tmp_path: Path) -> None:
+    """Verify engine table management and persistence across restart."""
+    from strata_engine.schema import Column, DataType, Schema
+
+    schema = Schema([
+        Column("id", DataType.INTEGER, nullable=False),
+        Column("name", DataType.VARCHAR, nullable=False, max_length=50),
+    ])
+
+    # Session 1
+    with StrataEngine(data_dir=tmp_path) as engine:
+        tbl = engine.create_table("users", schema)
+        tbl.insert([1, "Alice"])
+        tbl.insert([2, "Bob"])
+
+        assert engine.has_table("users") is True
+        assert engine.has_table("nonexistent") is False
+        assert engine.list_tables() == ["users"]
+
+    # Session 2
+    with StrataEngine(data_dir=tmp_path) as engine:
+        assert engine.has_table("users") is True
+        assert engine.list_tables() == ["users"]
+
+        tbl_recovered = engine.get_table("users")
+        assert tbl_recovered.count() == 2
+        rows = [r.values for _, r in tbl_recovered.scan()]
+        assert rows == [(1, "Alice"), (2, "Bob")]
+
+        engine.drop_table("users")
+        assert engine.has_table("users") is False
+        assert engine.list_tables() == []
+
+
+def test_engine_operations_closed_error(tmp_path: Path) -> None:
+    """Verify engine table operations raise StorageClosedError when unopened."""
+    from strata_engine.schema import Column, DataType, Schema
+    from strata_engine.storage import StorageClosedError
+
+    schema = Schema([Column("id", DataType.INTEGER)])
+    engine = StrataEngine(data_dir=tmp_path)
+
+    with pytest.raises(StorageClosedError):
+        engine.create_table("test", schema)
+    with pytest.raises(StorageClosedError):
+        engine.get_table("test")
+    with pytest.raises(StorageClosedError):
+        engine.drop_table("test")
+    with pytest.raises(StorageClosedError):
+        engine.list_tables()

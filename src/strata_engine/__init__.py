@@ -1,37 +1,99 @@
 """Strata Engine Package.
 
-Provides the custom relational database engine for the Strata system.
+Provides the custom relational database engine for the Strata system,
+including storage, schema, serialization, catalog, and engine interfaces.
 """
 
+from strata_engine.catalog import (
+    Catalog,
+    CatalogCorruptionError,
+    CatalogError,
+    ReservedNameError,
+    Table,
+    TableAlreadyExistsError,
+    TableNotFoundError,
+)
 from strata_engine.engine import StrataEngine
+from strata_engine.exceptions import StrataError
+from strata_engine.schema import (
+    Column,
+    ColumnNotFoundError,
+    CorruptRecordError,
+    DataType,
+    DuplicateColumnError,
+    InvalidColumnError,
+    InvalidSchemaError,
+    InvalidTypeError,
+    MAX_SERIALIZED_TUPLE_SIZE,
+    NullConstraintError,
+    Schema,
+    SchemaError,
+    SchemaMismatchError,
+    SerializationError,
+    Tuple,
+    TupleArityError,
+    TupleSerializer,
+    TupleSizeError,
+    TypeMismatchError,
+    ValueOutOfRangeError,
+)
 from strata_engine.storage import (
     PAGE_SIZE,
+    BufferPoolFullError,
+    BufferPoolManager,
+    ClockReplacer,
+    Frame,
+    HeapFile,
     InsufficientSpaceError,
     InvalidPageIdError,
+    InvalidPinCountError,
     InvalidSlotIdError,
     Page,
     PageFile,
     PageId,
+    PageNotCachedError,
     PageNotFoundError,
     PageSizeError,
     RecordId,
     RecordNotFoundError,
     RecordSizeError,
+    Replacer,
     SlottedPage,
     SlottedPageCorruptionError,
     StorageClosedError,
     StorageCorruptionError,
     StorageError,
+    validate_page_id,
 )
 
 __all__ = [
+    # Engine
     "StrataEngine",
+    "StrataError",
+    # Schema & Types
+    "DataType",
+    "Column",
+    "Schema",
+    "Tuple",
+    "TupleSerializer",
+    "MAX_SERIALIZED_TUPLE_SIZE",
+    # Catalog
+    "Catalog",
+    "Table",
+    # Storage
     "PAGE_SIZE",
     "Page",
     "PageId",
+    "validate_page_id",
     "PageFile",
     "RecordId",
     "SlottedPage",
+    "BufferPoolManager",
+    "Frame",
+    "Replacer",
+    "ClockReplacer",
+    "HeapFile",
+    # Storage Exceptions
     "StorageError",
     "PageSizeError",
     "InvalidPageIdError",
@@ -43,4 +105,28 @@ __all__ = [
     "InsufficientSpaceError",
     "InvalidSlotIdError",
     "SlottedPageCorruptionError",
+    "BufferPoolFullError",
+    "PageNotCachedError",
+    "InvalidPinCountError",
+    # Schema Exceptions
+    "SchemaError",
+    "InvalidColumnError",
+    "DuplicateColumnError",
+    "InvalidSchemaError",
+    "ColumnNotFoundError",
+    "InvalidTypeError",
+    "SerializationError",
+    "TupleArityError",
+    "TupleSizeError",
+    "TypeMismatchError",
+    "ValueOutOfRangeError",
+    "NullConstraintError",
+    "CorruptRecordError",
+    "SchemaMismatchError",
+    # Catalog Exceptions
+    "CatalogError",
+    "CatalogCorruptionError",
+    "TableNotFoundError",
+    "TableAlreadyExistsError",
+    "ReservedNameError",
 ]

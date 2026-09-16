@@ -5,7 +5,10 @@ slotted page record operations, storage file lifecycle, and disk layout violatio
 """
 
 
-class StorageError(Exception):
+from strata_engine.exceptions import StrataError
+
+
+class StorageError(StrataError):
     """Base exception for all errors within the storage engine."""
 
 

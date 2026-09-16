@@ -13,42 +13,39 @@ The long-term objective of Strata is to demonstrate core database management sys
 
 ---
 
-## 2. Project Status: Phase 4 — Heap File Record Storage
+## 2. Project Status: Phase 5 — System Catalog, Schema, and Table Metadata
 
-**Strata is currently in Phase 4.**
+**Strata is currently in Phase 5.**
 
-Phase 4 introduces multi-page record management via `HeapFile`, coordinating slotted pages across disk through the buffer pool with deterministic first-fit allocation and stable `RecordId` routing.
+Phase 5 introduces relational typing, schema validation, binary record serialization, relational table abstractions, and a persistent system catalog.
 
 ### What is Implemented:
+- **`strata_engine.schema`**:
+  - `DataType`: Supported types (`INTEGER`, `BIGINT`, `FLOAT`, `BOOLEAN`, `VARCHAR`).
+  - `Column`: Immutable column definition with identifier validation (`^[A-Za-z_][A-Za-z0-9_]{0,63}$`), strict nullability, and VARCHAR max length rules.
+  - `Schema`: Immutable sequence of columns (1–256), case-preserving names, case-insensitive lookups, duplicate detection, and deterministic 32-bit CRC32 schema fingerprinting.
+  - `Tuple`: Immutable relational row container supporting ordinal and case-insensitive named access, strict equality contract, and unhashable semantics.
+  - `TupleSerializer`: Binary serializer with big-endian packing, null bitmap (LSB-first), UTF-8 text encoding, strict type checks, 4084-byte boundary enforcement, and corruption detection.
+  - Schema Exceptions: `SchemaError`, `InvalidColumnError`, `DuplicateColumnError`, `InvalidSchemaError`, `ColumnNotFoundError`, `InvalidTypeError`, `SerializationError`, `TupleArityError`, `TupleSizeError`, `TypeMismatchError`, `ValueOutOfRangeError`, `NullConstraintError`, `CorruptRecordError`, `SchemaMismatchError`.
+- **`strata_engine.catalog`**:
+  - `Table`: Relational table abstraction wrapping a `HeapFile` and `Schema` with typed `insert()`, `get()`, `delete()`, `scan()`, `count()`, and lifecycle management.
+  - `Catalog`: Persistent system catalog managing `<data_dir>/catalog/tables.db` and `<data_dir>/catalog/columns.db`, persistent monotonic High-Water Mark (HWM) table ID allocation without ID reuse, physical file-per-table mapping (`tables/table_{id}.db`), orphan file reconciliation, and DDL operations (`create_table`, `get_table`, `has_table`, `drop_table`, `list_tables`).
+  - Catalog Exceptions: `CatalogError`, `CatalogCorruptionError`, `TableNotFoundError`, `TableAlreadyExistsError`, `ReservedNameError`.
+- **`strata_engine`**:
+  - `StrataEngine`: Full database lifecycle management (`open()`, `close()`, context manager), table management delegators, and status reporting.
 - **`strata_engine.storage`**:
-  - `PAGE_SIZE`: Authoritative 4096-byte page size.
-  - `Page`: Fixed-size 4096-byte binary page abstraction with strict size validation, immutability export, and encapsulated `write_bytes()` buffer synchronization.
-  - `PageId`: Non-negative page identifier mapping directly to offset $\text{PageId} \times 4096$.
-  - `PageFile`: Disk-backed page storage manager supporting deterministic zero-fill allocation, random access read/write, file reopening/recovery, and corruption detection.
-  - `RecordId`: Identifies records via `(page_id, slot_id)` with validation and hashing.
-  - `SlottedPage`: Big-Endian binary slotted-page format with 8-byte header, 4-byte slot directory entries growing forward, and record byte payloads growing backward. Supports variable-length record insertion, retrieval, deletion, and defragmentation compaction with stable slot IDs.
-  - `ClockReplacer`: Deterministic CLOCK (Second-Chance) replacement policy tracking unpinned frames.
-  - `Frame`: Buffer frame descriptor tracking resident page, pin count, dirty status, and lifecycle.
-  - `BufferPoolManager`: Fixed-capacity buffer pool manager mediating page fetch, allocation, pin/unpin reference counting, dirty page tracking, automatic writeback on eviction, and safe flushing.
-  - `HeapFile`: Multi-page record collection abstraction supporting variable-length record insertion, retrieval by `RecordId`, deletion with slot reuse, first-fit page selection, and leak-proof table scanning without holding pins across generator yields.
-  - Storage Exceptions: `PageSizeError`, `InvalidPageIdError`, `PageNotFoundError`, `StorageClosedError`, `StorageCorruptionError`, `RecordSizeError`, `RecordNotFoundError`, `InsufficientSpaceError`, `InvalidSlotIdError`, `SlottedPageCorruptionError`, `BufferPoolFullError`, `PageNotCachedError`, `InvalidPinCountError`.
-- **`strata_engine`**: Minimal `StrataEngine` class with status reporting and `execute()` interface placeholder.
-- **`strata_backend`**: FastAPI application providing `GET /health`.
-- **`EngineAdapter`**: In-process adapter bridging backend routes and the database engine.
-- **Automated Tests**: 152 unit and integration tests across heap files, buffer pool management, clock replacement, slotted pages, storage operations, engine lifecycle, and health endpoints.
-- **Packaging**: Standard src-based layout with `pyproject.toml` supporting editable installation.
-- **Documentation**: Architecture specifications, developer setup guides, and detailed storage engine documentation (`docs/storage.md`).
+  - Unchanged Phase 1–4 storage primitives: `Page`, `PageId`, `PageFile`, `RecordId`, `SlottedPage`, `ClockReplacer`, `BufferPoolManager`, `HeapFile`.
+- **`strata_backend`**: FastAPI application providing `GET /health` with `EngineAdapter`.
+- **Automated Tests**: 236 unit and integration tests across storage, heap files, schemas, serialization, table operations, catalog persistence, and health endpoints.
 
-### What is Intentionally NOT Implemented in Phase 4:
-Phase 4 does not implement higher-level relational database engine components or frontend applications:
-- No system catalog or table schemas (Planned: Phase 5)
-- No SQL lexer, parser, or AST generation
-- No query execution engine or relational algebra iterators
-- No B+ tree indexing or index lookups
-- No query planner, optimizer, or EXPLAIN plans
-- No transactions, WAL, or recovery
-- No locking, strict 2PL, or deadlock detection
-- No user authentication, roles, or workspace logic
+### What is Intentionally NOT Implemented in Phase 5:
+- No SQL lexer, parser, or AST generation (Planned: Phase 6)
+- No query execution engine or Volcano iterators (Planned: Phase 7)
+- No B+ tree secondary indexing (Planned: Phase 8)
+- No transactions, WAL logging, or crash recovery (Planned: Phase 9)
+- No query optimizer or EXPLAIN plans
+- No overflow / chained large object pages (> 4084 bytes)
+- No user authentication or workspace domain backend
 - No frontend client
 
 ---
