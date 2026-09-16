@@ -111,9 +111,10 @@ A clean conceptual separation is maintained between:
 | `EngineAdapter` | **Implemented (Phase 0)** | In-process boundary between backend and engine |
 | `GET /health` Endpoint | **Implemented (Phase 0)** | Validated HTTP 200 endpoint returning engine status JSON |
 | Fixed-Size Pages & Page File Storage | **Implemented (Phase 1)** | Fixed-size 4096-byte pages, PageId, PageFile manager |
+| Slotted Page Record Storage | **Implemented (Phase 2)** | Slotted page headers, slot directories, compaction, RecordId |
 | Buffer Pool Manager | **Implemented (Phase 3)** | In-memory frame pool, ClockReplacer, pin/unpin tracking, dirty writeback |
-| Heap File Storage | *Planned (Phase 4)* | Multi-page record collection, page directory, free-space management |
-| System Catalog | *Planned* | Metadata storage for schemas and table definitions |
+| Heap File Storage | **Implemented (Phase 4)** | Multi-page record collection, first-fit allocation, RecordId routing, leak-proof scan |
+| System Catalog | *Planned (Phase 5)* | Metadata storage for schemas and table definitions |
 | SQL Lexer & Parser | *Planned* | Tokenization and AST generation for subset of SQL |
 | Query Execution Engine | *Planned* | Volcano-style iterator model (Scan, Filter, Project, Join) |
 | B+ Tree Indexing | *Planned* | Page-backed tree indexing for efficient point & range lookups |

@@ -67,6 +67,27 @@ class Page:
         """
         return bytes(self._data)
 
+    def write_bytes(self, data: Union[bytes, bytearray]) -> None:
+        """Overwrite page contents with an exact PAGE_SIZE byte sequence.
+
+        Args:
+            data: Binary sequence of length PAGE_SIZE.
+
+        Raises:
+            PageSizeError: If data length is not exactly PAGE_SIZE.
+            TypeError: If data is not bytes or bytearray.
+        """
+        if not isinstance(data, (bytes, bytearray)):
+            raise TypeError(
+                f"Page data must be bytes or bytearray, got {type(data).__name__}."
+            )
+        if len(data) != PAGE_SIZE:
+            raise PageSizeError(
+                f"Page data must be exactly {PAGE_SIZE} bytes, got {len(data)} bytes."
+            )
+        self._data[:] = data
+
+
     @property
     def size(self) -> int:
         """Return the fixed size of the page in bytes."""

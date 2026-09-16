@@ -1,6 +1,7 @@
-# Strata Storage Engine — Storage Foundation, Slotted Pages & Buffer Management
+# Strata Storage Engine — Storage Foundation, Slotted Pages, Buffer Management & Heap Files
 
-This document describes the design, architecture, binary layout, and usage of Strata's disk-backed storage engine (`strata_engine.storage`), covering Phase 1 (raw block I/O), Phase 2 (slotted-page record storage), and Phase 3 (in-memory buffer pool management).
+This document describes the design, architecture, binary layout, and usage of Strata's disk-backed storage engine (`strata_engine.storage`), covering Phase 1 (raw block I/O), Phase 2 (slotted-page record storage), Phase 3 (in-memory buffer pool management), and Phase 4 (heap file record storage).
+
 
 ---
 
@@ -241,12 +242,52 @@ with PageFile(db_path) as pf:
 
 ---
 
-## 9. Running the Storage Test Suite
+## 9. Heap File Record Storage (`HeapFile`)
 
-Run the storage test suite including the buffer pool:
+Phase 4 introduces the **HeapFile** (`strata_engine.storage.HeapFile`), which coordinates multiple slotted pages through the `BufferPoolManager` to provide an unordered collection of variable-length records.
+
+### 9.1 Core Responsibilities
+- **Multi-Page Management**: Treats all sequential pages `[PageId(0) ... PageId(N-1)]` in the underlying `PageFile` as a unified logical heap.
+- **First-Fit Page Allocation**: Evaluates existing pages in ascending order for space before allocating a new page on disk via `bpm.new_page()`.
+- **Stable Addressing**: Directly maps callers to records using `RecordId(page_id, slot_id)`.
+- **Leak-Proof Scan**: Reads page records into a local memory list and unpins the page **before** yielding records, preventing pin leaks even if a consumer breaks early from the loop or if the buffer pool capacity is `pool_size = 1`.
+- **Encapsulated Mutation**: Synchronizes memory-resident pages using `page.write_bytes(sp.to_bytes())` without exposing private buffer internals.
+
+### 9.2 End-to-End HeapFile Example
+
+```python
+from pathlib import Path
+from strata_engine.storage import PageFile, BufferPoolManager, HeapFile
+
+db_path = Path("data/tasks.db")
+
+with PageFile(db_path) as pf:
+    with BufferPoolManager(pf, pool_size=5) as bpm:
+        heap = HeapFile(bpm)
+
+        # 1. Insert records across pages
+        r0 = heap.insert_record(b"Task 0: Design Lexer")
+        r1 = heap.insert_record(b"Task 1: Build Parser")
+
+        # 2. Retrieve by RecordId
+        assert heap.get_record(r0) == b"Task 0: Design Lexer"
+
+        # 3. Iterate through all records
+        for rid, data in heap.scan_records():
+            print(f"Record {rid}: {data.decode('utf-8')}")
+
+        # 4. Delete a record (slot becomes reusable)
+        heap.delete_record(r0)
+```
+
+---
+
+## 10. Running the Storage Test Suite
+
+Run the full storage test suite including heap file tests:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_storage.py tests/test_slotted_page.py tests/test_buffer_pool.py -v
+.\.venv\Scripts\python.exe -m pytest tests/test_storage.py tests/test_slotted_page.py tests/test_buffer_pool.py tests/test_heap_file.py -v
 ```
 
 Run all tests in the repository:
@@ -254,4 +295,5 @@ Run all tests in the repository:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -v
 ```
+
 

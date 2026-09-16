@@ -21,6 +21,7 @@ from strata_engine.storage.exceptions import (
     StorageCorruptionError,
     StorageError,
 )
+from strata_engine.storage.heap_file import HeapFile
 from strata_engine.storage.page import PAGE_SIZE, Page
 from strata_engine.storage.page_file import PageFile
 from strata_engine.storage.page_id import PageId, validate_page_id
@@ -40,6 +41,8 @@ __all__ = [
     "Frame",
     "Replacer",
     "ClockReplacer",
+    "HeapFile",
+
     "StorageError",
     "PageSizeError",
     "InvalidPageIdError",

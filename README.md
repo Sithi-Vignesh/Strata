@@ -13,16 +13,16 @@ The long-term objective of Strata is to demonstrate core database management sys
 
 ---
 
-## 2. Project Status: Phase 3 — Buffer Pool Management
+## 2. Project Status: Phase 4 — Heap File Record Storage
 
-**Strata is currently in Phase 3.**
+**Strata is currently in Phase 4.**
 
-Phase 3 introduces in-memory buffer pool management with deterministic page eviction, mediating between disk storage and in-memory page structures.
+Phase 4 introduces multi-page record management via `HeapFile`, coordinating slotted pages across disk through the buffer pool with deterministic first-fit allocation and stable `RecordId` routing.
 
 ### What is Implemented:
 - **`strata_engine.storage`**:
   - `PAGE_SIZE`: Authoritative 4096-byte page size.
-  - `Page`: Fixed-size 4096-byte binary page abstraction with strict size validation and immutability.
+  - `Page`: Fixed-size 4096-byte binary page abstraction with strict size validation, immutability export, and encapsulated `write_bytes()` buffer synchronization.
   - `PageId`: Non-negative page identifier mapping directly to offset $\text{PageId} \times 4096$.
   - `PageFile`: Disk-backed page storage manager supporting deterministic zero-fill allocation, random access read/write, file reopening/recovery, and corruption detection.
   - `RecordId`: Identifies records via `(page_id, slot_id)` with validation and hashing.
@@ -30,18 +30,18 @@ Phase 3 introduces in-memory buffer pool management with deterministic page evic
   - `ClockReplacer`: Deterministic CLOCK (Second-Chance) replacement policy tracking unpinned frames.
   - `Frame`: Buffer frame descriptor tracking resident page, pin count, dirty status, and lifecycle.
   - `BufferPoolManager`: Fixed-capacity buffer pool manager mediating page fetch, allocation, pin/unpin reference counting, dirty page tracking, automatic writeback on eviction, and safe flushing.
+  - `HeapFile`: Multi-page record collection abstraction supporting variable-length record insertion, retrieval by `RecordId`, deletion with slot reuse, first-fit page selection, and leak-proof table scanning without holding pins across generator yields.
   - Storage Exceptions: `PageSizeError`, `InvalidPageIdError`, `PageNotFoundError`, `StorageClosedError`, `StorageCorruptionError`, `RecordSizeError`, `RecordNotFoundError`, `InsufficientSpaceError`, `InvalidSlotIdError`, `SlottedPageCorruptionError`, `BufferPoolFullError`, `PageNotCachedError`, `InvalidPinCountError`.
 - **`strata_engine`**: Minimal `StrataEngine` class with status reporting and `execute()` interface placeholder.
 - **`strata_backend`**: FastAPI application providing `GET /health`.
 - **`EngineAdapter`**: In-process adapter bridging backend routes and the database engine.
-- **Automated Tests**: 126 unit and integration tests across buffer pool management, clock replacement, slotted pages, storage operations, engine lifecycle, and health endpoints.
+- **Automated Tests**: 152 unit and integration tests across heap files, buffer pool management, clock replacement, slotted pages, storage operations, engine lifecycle, and health endpoints.
 - **Packaging**: Standard src-based layout with `pyproject.toml` supporting editable installation.
 - **Documentation**: Architecture specifications, developer setup guides, and detailed storage engine documentation (`docs/storage.md`).
 
-### What is Intentionally NOT Implemented in Phase 3:
-Phase 3 does not implement higher-level database engine components or frontend applications:
-- No heap files, page directories, or multi-page table collections (Planned: Phase 4)
-- No system catalog or table schemas
+### What is Intentionally NOT Implemented in Phase 4:
+Phase 4 does not implement higher-level relational database engine components or frontend applications:
+- No system catalog or table schemas (Planned: Phase 5)
 - No SQL lexer, parser, or AST generation
 - No query execution engine or relational algebra iterators
 - No B+ tree indexing or index lookups
@@ -165,11 +165,12 @@ curl http://127.0.0.1:8000/health
 
 ---
 
-## 6. Next Planned Phase: Phase 4 — Heap File Storage & Free-Space Management
+## 6. Next Planned Phase: Phase 5 — System Catalog & Schema Management
 
-With Phase 3 verified, the planned next phase will focus on:
-- Multi-page table abstraction (`HeapFile`) spanning arbitrary numbers of slotted pages.
-- Page directory and free-space tracking to route record insertions to pages with sufficient space.
-- Table scans iterating across records and pages via the `BufferPoolManager`.
-- Record insertion, lookup, and deletion by `RecordId` across multi-page files.
+With Phase 4 verified, the planned next phase will focus on:
+- System catalog tables for relational metadata storage (table schemas, column definitions, data types).
+- Table schema definitions and data type system (INTEGER, VARCHAR, BOOLEAN).
+- Tuple serialization and deserialization converting relational rows to/from opaque HeapFile records.
+- Named table lookup and metadata persistence.
+
 

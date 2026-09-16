@@ -88,6 +88,31 @@ def test_page_equality() -> None:
     assert p1 == (b"\x01" * PAGE_SIZE)
 
 
+def test_page_write_bytes_valid() -> None:
+    """Verify write_bytes successfully overwrites page data."""
+    page = Page.blank()
+    new_data = b"\xAB" * PAGE_SIZE
+    page.write_bytes(new_data)
+    assert page.to_bytes() == new_data
+
+
+def test_page_write_bytes_invalid_size() -> None:
+    """Verify write_bytes with incorrect size raises PageSizeError."""
+    page = Page.blank()
+    with pytest.raises(PageSizeError):
+        page.write_bytes(b"\x00" * (PAGE_SIZE - 1))
+    with pytest.raises(PageSizeError):
+        page.write_bytes(b"\x00" * (PAGE_SIZE + 1))
+
+
+def test_page_write_bytes_invalid_type() -> None:
+    """Verify write_bytes with non-bytes argument raises TypeError."""
+    page = Page.blank()
+    with pytest.raises(TypeError):
+        page.write_bytes("not_bytes")  # type: ignore[arg-type]
+
+
+
 # ============================================================================
 # PageId Tests
 # ============================================================================
