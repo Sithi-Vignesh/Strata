@@ -1,7 +1,7 @@
 """Exceptions for the Strata storage engine.
 
 Provides structured, domain-specific exception types for page handling,
-storage file lifecycle, and disk layout violations.
+slotted page record operations, storage file lifecycle, and disk layout violations.
 """
 
 
@@ -27,3 +27,23 @@ class StorageClosedError(StorageError):
 
 class StorageCorruptionError(StorageError):
     """Raised when storage file data or header layout violates format invariants."""
+
+
+class RecordSizeError(StorageError):
+    """Raised when a record size exceeds the maximum possible space in a page."""
+
+
+class RecordNotFoundError(StorageError):
+    """Raised when accessing a slot that does not exist or has been deleted."""
+
+
+class InsufficientSpaceError(StorageError):
+    """Raised when a slotted page does not have enough free space to store a record."""
+
+
+class InvalidSlotIdError(StorageError):
+    """Raised when a slot identifier is negative, not an integer, or invalid."""
+
+
+class SlottedPageCorruptionError(StorageCorruptionError):
+    """Raised when a slotted page binary layout violates structure invariants."""

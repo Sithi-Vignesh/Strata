@@ -13,11 +13,11 @@ The long-term objective of Strata is to demonstrate core database management sys
 
 ---
 
-## 2. Project Status: Phase 1 — Core Storage Engine Foundation
+## 2. Project Status: Phase 2 — Record and Slotted-Page Storage Layer
 
-**Strata is currently in Phase 1.**
+**Strata is currently in Phase 2.**
 
-Phase 1 establishes the foundational disk-backed storage engine for Strata.
+Phase 2 establishes the record-oriented storage layer on top of fixed-size pages.
 
 ### What is Implemented:
 - **`strata_engine.storage`**:
@@ -25,17 +25,18 @@ Phase 1 establishes the foundational disk-backed storage engine for Strata.
   - `Page`: Fixed-size 4096-byte binary page abstraction with strict size validation and immutability.
   - `PageId`: Non-negative page identifier mapping directly to offset $\text{PageId} \times 4096$.
   - `PageFile`: Disk-backed page storage manager supporting deterministic zero-fill allocation, random access read/write, file reopening/recovery, and corruption detection.
-  - Storage Exceptions: `PageSizeError`, `InvalidPageIdError`, `PageNotFoundError`, `StorageClosedError`, `StorageCorruptionError`.
+  - `RecordId`: Identifies records via `(page_id, slot_id)` with validation and hashing.
+  - `SlottedPage`: Big-Endian binary slotted-page format with 8-byte header, 4-byte slot directory entries growing forward, and record byte payloads growing backward. Supports variable-length record insertion, retrieval, deletion, and defragmentation compaction with stable slot IDs.
+  - Storage Exceptions: `PageSizeError`, `InvalidPageIdError`, `PageNotFoundError`, `StorageClosedError`, `StorageCorruptionError`, `RecordSizeError`, `RecordNotFoundError`, `InsufficientSpaceError`, `InvalidSlotIdError`, `SlottedPageCorruptionError`.
 - **`strata_engine`**: Minimal `StrataEngine` class with status reporting and `execute()` interface placeholder.
 - **`strata_backend`**: FastAPI application providing `GET /health`.
 - **`EngineAdapter`**: In-process adapter bridging backend routes and the database engine.
-- **Automated Tests**: 36 unit and integration tests across storage operations, engine lifecycle, and health endpoints.
+- **Automated Tests**: 67 unit and integration tests across slotted pages, storage operations, engine lifecycle, and health endpoints.
 - **Packaging**: Standard src-based layout with `pyproject.toml` supporting editable installation.
 - **Documentation**: Architecture specifications, developer setup guides, and detailed storage engine documentation (`docs/storage.md`).
 
-### What is Intentionally NOT Implemented in Phase 1:
-Phase 1 does not implement higher-level database engine components or frontend applications:
-- No slotted page record formatting or tuple serialization
+### What is Intentionally NOT Implemented in Phase 2:
+Phase 2 does not implement higher-level database engine components or frontend applications:
 - No buffer pool manager or frame eviction algorithms
 - No system catalog or table schemas
 - No SQL lexer, parser, or AST generation
@@ -161,9 +162,10 @@ curl http://127.0.0.1:8000/health
 
 ---
 
-## 6. Next Planned Phase: Phase 2 — Slotted Page Record Storage
+## 6. Next Planned Phase: Phase 3 — Buffer Pool Manager
 
-With Phase 1 verified, the planned next phase will focus on:
-- Designing a slotted page binary architecture with slot directories (record offsets and lengths).
-- Implementing serialization and deserialization of variable-length and fixed-length data records into page byte buffers.
-- Building record management primitives (insert, read, update, delete records within pages) and defragmentation.
+With Phase 2 verified, the planned next phase will focus on:
+- In-memory buffer frame management and fixed-size frame pool allocation.
+- Page pin/unpin tracking and dirty page status management.
+- Buffer replacement algorithms (Clock / Second-Chance / LRU) to evict unpinned pages safely.
+- Transparent buffer manager interface mediating all page requests between execution iterators and the disk storage engine.
