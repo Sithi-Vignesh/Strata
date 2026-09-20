@@ -15,6 +15,17 @@ from strata_engine.catalog import (
 )
 from strata_engine.engine import StrataEngine
 from strata_engine.exceptions import StrataError
+from strata_engine.execution import (
+    ComparisonPredicate,
+    ExecutionError,
+    Filter,
+    IsNullPredicate,
+    Operator,
+    OperatorClosedError,
+    Predicate,
+    Projection,
+    TableScan,
+)
 from strata_engine.schema import (
     Column,
     ColumnNotFoundError,
@@ -129,4 +140,14 @@ __all__ = [
     "TableNotFoundError",
     "TableAlreadyExistsError",
     "ReservedNameError",
+    # Execution
+    "ExecutionError",
+    "OperatorClosedError",
+    "Operator",
+    "TableScan",
+    "Predicate",
+    "ComparisonPredicate",
+    "IsNullPredicate",
+    "Filter",
+    "Projection",
 ]
