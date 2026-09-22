@@ -23,6 +23,9 @@ class TokenType(Enum):
     DESC = auto()
     LIMIT = auto()
     OFFSET = auto()
+    JOIN = auto()
+    INNER = auto()
+    ON = auto()
 
     IDENTIFIER = auto()
     INTEGER = auto()
@@ -30,6 +33,7 @@ class TokenType(Enum):
     STRING = auto()
 
     STAR = auto()
+    DOT = auto()
     COMMA = auto()
     SEMICOLON = auto()
     LEFT_PAREN = auto()

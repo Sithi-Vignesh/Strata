@@ -7,6 +7,8 @@ from strata_engine.catalog import Table
 from strata_engine.execution import Predicate
 from strata_engine.planning.order_by import OrderBy
 from strata_engine.planning.aggregate import AggregateSpec
+from strata_engine.planning.column_ref import ColumnRef
+from strata_engine.planning.join import JoinOrderBy, JoinSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +22,10 @@ class QueryRequest:
     limit: int | None = None
     offset: int = 0
     aggregates: tuple[AggregateSpec, ...] | None = None
+    join: JoinSpec | None = None
+    joined_where: object | None = None
+    join_projection: tuple[ColumnRef, ...] | None = None
+    join_order_by: tuple[JoinOrderBy, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.table, Table):
@@ -69,6 +75,18 @@ class QueryRequest:
             if self.order_by is not None:
                 raise ValueError("ORDER BY is not supported for aggregate requests.")
             object.__setattr__(self, "aggregates", aggregates)
+        if self.join is not None:
+            if not isinstance(self.join, JoinSpec): raise TypeError("join must be a JoinSpec or None.")
+            if self.predicate is not None or self.projection is not None or self.order_by is not None or self.aggregates is not None:
+                raise ValueError("Join requests must use join-specific WHERE, projection, ordering, and no aggregates.")
+            if self.join_projection is None: raise ValueError("Join requests require explicit join_projection.")
+            projection = tuple(self.join_projection)
+            if not projection or not all(isinstance(item, ColumnRef) for item in projection): raise TypeError("join_projection must contain ColumnRef values.")
+            object.__setattr__(self, "join_projection", projection)
+            if self.join_order_by is not None:
+                order = tuple(self.join_order_by)
+                if not all(isinstance(item, JoinOrderBy) for item in order): raise TypeError("join_order_by must contain JoinOrderBy values.")
+                object.__setattr__(self, "join_order_by", order)
 
 
 def _validate_count(name: str, value: int) -> None:

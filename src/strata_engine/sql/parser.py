@@ -6,6 +6,8 @@ from strata_engine.sql.ast import (
     AndExpression,
     AggregateCall,
     AggregateList,
+    QualifiedIdentifier,
+    JoinClause,
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
@@ -51,6 +53,12 @@ class Parser:
         projection = self._projection()
         self._consume(TokenType.FROM, "FROM")
         table_name = self._consume(TokenType.IDENTIFIER, "table identifier").lexeme
+        join = None
+        if self._match(TokenType.INNER):
+            self._consume(TokenType.JOIN, "JOIN after INNER")
+            join = self._join_clause()
+        elif self._match(TokenType.JOIN):
+            join = self._join_clause()
 
         where: SQLPredicate | None = None
         if self._match(TokenType.WHERE):
@@ -79,6 +87,7 @@ class Parser:
             order_by=order_by,
             limit=limit,
             offset=offset,
+            join=join,
         )
 
     def _projection(self) -> SelectAll | ColumnList | AggregateList:
@@ -87,7 +96,7 @@ class Parser:
         items = [self._select_item()]
         while self._match(TokenType.COMMA):
             items.append(self._select_item())
-        if all(isinstance(item, str) for item in items):
+        if all(isinstance(item, (str, QualifiedIdentifier)) for item in items):
             return ColumnList(tuple(items))  # type: ignore[arg-type]
         if all(isinstance(item, AggregateCall) for item in items):
             return AggregateList(tuple(items))  # type: ignore[arg-type]
@@ -96,8 +105,10 @@ class Parser:
             f"Cannot mix ordinary projection columns and aggregate calls at position {token.position}."
         )
 
-    def _select_item(self) -> str | AggregateCall:
+    def _select_item(self) -> str | QualifiedIdentifier | AggregateCall:
         name = self._consume(TokenType.IDENTIFIER, "projection column or aggregate function").lexeme
+        if self._match(TokenType.DOT):
+            return QualifiedIdentifier(self._consume(TokenType.IDENTIFIER, "qualified column").lexeme, name)
         if not self._match(TokenType.LEFT_PAREN):
             return name
         if name.upper() not in _AGGREGATE_FUNCTIONS:
@@ -111,6 +122,20 @@ class Parser:
         self._consume(TokenType.RIGHT_PAREN, "')' after aggregate argument")
         return AggregateCall(name, argument)
 
+    def _column_ref(self) -> QualifiedIdentifier:
+        first = self._consume(TokenType.IDENTIFIER, "column reference").lexeme
+        if self._match(TokenType.DOT):
+            return QualifiedIdentifier(self._consume(TokenType.IDENTIFIER, "qualified column").lexeme, first)
+        return QualifiedIdentifier(first)
+
+    def _join_clause(self) -> JoinClause:
+        right_table = self._consume(TokenType.IDENTIFIER, "joined table identifier").lexeme
+        self._consume(TokenType.ON, "ON after joined table")
+        left = self._column_ref()
+        self._consume(TokenType.EQUAL, "'=' in JOIN ON condition")
+        right = self._column_ref()
+        return JoinClause(right_table, left, right)
+
     def _predicate(self) -> SQLPredicate:
         return self._or_expression()
 
@@ -121,13 +146,13 @@ class Parser:
         return tuple(items)
 
     def _order_item(self) -> OrderByItem:
-        column_name = self._consume(TokenType.IDENTIFIER, "ORDER BY column").lexeme
+        ref = self._column_ref()
         descending = False
         if self._match(TokenType.DESC):
             descending = True
         else:
             self._match(TokenType.ASC)
-        return OrderByItem(column_name, descending)
+        return OrderByItem(ref.column_name, descending, ref.qualifier)
 
     def _consume_non_negative_integer(self, expected: str) -> int:
         token = self._peek()
@@ -161,11 +186,11 @@ class Parser:
         return self._leaf_predicate()
 
     def _leaf_predicate(self) -> SQLPredicate:
-        column_name = self._consume(TokenType.IDENTIFIER, "predicate column").lexeme
+        ref = self._column_ref()
         if self._match(TokenType.IS):
             is_not_null = self._match(TokenType.NOT)
             self._consume(TokenType.NULL, "NULL after IS")
-            return IsNullExpression(column_name, is_not_null=is_not_null)
+            return IsNullExpression(ref.column_name, is_not_null=is_not_null, qualifier=ref.qualifier)
 
         token = self._peek()
         if token.type not in _COMPARISON_OPERATORS:
@@ -173,7 +198,7 @@ class Parser:
         self._advance()
         operator = _COMPARISON_OPERATORS[token.type]
         value = self._consume_literal()
-        return ComparisonExpression(column_name, operator, value)
+        return ComparisonExpression(ref.column_name, operator, value, ref.qualifier)
 
     def _consume_literal(self) -> object:
         token = self._peek()

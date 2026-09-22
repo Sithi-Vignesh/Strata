@@ -16,6 +16,7 @@ from strata_engine.catalog import (
 from strata_engine.engine import StrataEngine
 from strata_engine.exceptions import StrataError
 from strata_engine.planning import (
+    AmbiguousColumnError, ColumnRef, JoinCondition, JoinPlan, JoinSpec,
     AggregatePlan,
     AggregateSpec,
     FilterPlan,
@@ -30,6 +31,7 @@ from strata_engine.planning import (
     SortPlan,
 )
 from strata_engine.execution import (
+    NestedLoopJoin,
     Aggregate,
     AndPredicate,
     ComparisonPredicate,
@@ -112,6 +114,7 @@ __all__ = [
     "StrataError",
     # Planning
     "PlanningError",
+    "AmbiguousColumnError", "ColumnRef", "JoinCondition", "JoinSpec", "JoinPlan",
     "AggregateSpec",
     "AggregatePlan",
     "Plan",
@@ -195,6 +198,7 @@ __all__ = [
     "NotPredicate",
     "Filter",
     "Aggregate",
+    "NestedLoopJoin",
     "Projection",
     "Sort",
     "Limit",

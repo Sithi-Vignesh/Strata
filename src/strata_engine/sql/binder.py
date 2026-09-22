@@ -11,9 +11,12 @@ from strata_engine.execution import (
 )
 from strata_engine.planning import OrderBy, QueryRequest
 from strata_engine.planning import AggregateSpec
+from strata_engine.planning import ColumnRef, JoinCondition, JoinOrderBy, JoinSpec
+from strata_engine.planning.join import AndCondition, ColumnLiteralCondition, IsNullCondition, NotCondition, OrCondition
 from strata_engine.sql.ast import (
     AndExpression,
     AggregateList,
+    QualifiedIdentifier,
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
@@ -41,10 +44,14 @@ class Binder:
             raise TypeError(f"Expected SelectStatement instance, got {type(statement).__name__}.")
 
         table = self._catalog.get_table(statement.table_name)
+        if statement.join is not None:
+            return self._bind_join(statement, table)
         if isinstance(statement.projection, SelectAll):
             projection: tuple[str, ...] | None = None
             aggregates = None
         elif isinstance(statement.projection, ColumnList):
+            if any(isinstance(item, QualifiedIdentifier) for item in statement.projection.columns):
+                raise SQLBindingError("Qualified column references require a JOIN.")
             projection = statement.projection.columns
             aggregates = None
         elif isinstance(statement.projection, AggregateList):
@@ -58,6 +65,10 @@ class Binder:
 
         if aggregates is not None and statement.order_by is not None:
             raise SQLBindingError("ORDER BY is not supported for aggregate queries.")
+        if statement.order_by is not None and any(item.qualifier is not None for item in statement.order_by):
+            raise SQLBindingError("Qualified ORDER BY references require a JOIN.")
+        if statement.where is not None and _has_qualified_predicate(statement.where):
+            raise SQLBindingError("Qualified WHERE references require a JOIN.")
 
         predicate = self._bind_predicate(statement.where) if statement.where is not None else None
         order_by = (
@@ -76,6 +87,21 @@ class Binder:
             aggregates=aggregates,
         )
 
+    def _bind_join(self, statement: SelectStatement, table) -> QueryRequest:
+        assert statement.join is not None
+        right = self._catalog.get_table(statement.join.right_table_name)
+        if table.name.lower() == right.name.lower():
+            raise SQLBindingError("JOIN sources must be distinct; self joins require aliases.")
+        if isinstance(statement.projection, SelectAll):
+            raise SQLBindingError("SELECT * is not supported for JOIN queries.")
+        if isinstance(statement.projection, AggregateList):
+            raise SQLBindingError("Aggregate JOIN queries are not supported.")
+        refs = tuple(_column_ref(item) for item in statement.projection.columns)
+        condition = JoinCondition(_column_ref(statement.join.left_column), _column_ref(statement.join.right_column))
+        joined_where = self._bind_joined_where(statement.where) if statement.where is not None else None
+        joined_order = tuple(JoinOrderBy(ColumnRef(item.column_name, item.qualifier), item.descending) for item in statement.order_by) if statement.order_by is not None else None
+        return QueryRequest(table=table, limit=statement.limit, offset=statement.offset, join=JoinSpec(right, condition), joined_where=joined_where, join_projection=refs, join_order_by=joined_order)
+
     def _bind_predicate(self, predicate: SQLPredicate) -> Predicate:
         """Translate an unresolved SQL predicate tree to execution predicates."""
         if isinstance(predicate, ComparisonExpression):
@@ -93,3 +119,20 @@ class Binder:
         if isinstance(predicate, NotExpression):
             return NotPredicate(self._bind_predicate(predicate.child))
         raise SQLBindingError("Unsupported SQL predicate node.")
+
+    def _bind_joined_where(self, predicate: SQLPredicate) -> object:
+        if isinstance(predicate, ComparisonExpression): return ColumnLiteralCondition(ColumnRef(predicate.column_name, predicate.qualifier), predicate.operator, predicate.value)
+        if isinstance(predicate, IsNullExpression): return IsNullCondition(ColumnRef(predicate.column_name, predicate.qualifier), predicate.is_not_null)
+        if isinstance(predicate, AndExpression): return AndCondition(self._bind_joined_where(predicate.left), self._bind_joined_where(predicate.right))
+        if isinstance(predicate, OrExpression): return OrCondition(self._bind_joined_where(predicate.left), self._bind_joined_where(predicate.right))
+        if isinstance(predicate, NotExpression): return NotCondition(self._bind_joined_where(predicate.child))
+        raise SQLBindingError("Unsupported SQL predicate node.")
+
+def _column_ref(value: str | QualifiedIdentifier) -> ColumnRef:
+    return ColumnRef(value, None) if isinstance(value, str) else ColumnRef(value.column_name, value.qualifier)
+
+def _has_qualified_predicate(predicate: SQLPredicate) -> bool:
+    if isinstance(predicate, (ComparisonExpression, IsNullExpression)): return predicate.qualifier is not None
+    if isinstance(predicate, (AndExpression, OrExpression)): return _has_qualified_predicate(predicate.left) or _has_qualified_predicate(predicate.right)
+    if isinstance(predicate, NotExpression): return _has_qualified_predicate(predicate.child)
+    return False

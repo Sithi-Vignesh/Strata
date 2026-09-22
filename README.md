@@ -6,7 +6,7 @@ Strata is a CSE302L / BCSE302P Database Systems project built bottom-up: first t
 
 ## Status
 
-**Phase 11 — Global Aggregation is implemented.** It adds global `COUNT`, `SUM`, `AVG`, `MIN`, and `MAX` over the existing SQL, planning, and execution layers.
+**Phase 12 — Two-table INNER JOIN is implemented.** It adds one nested-loop INNER equality join with qualified references, joined WHERE, ORDER BY, and LIMIT/OFFSET.
 
 Before Phase 8, the suite had **291 passing tests** across storage, buffer pooling, heap files, schema and serialization, catalog and tables, query execution, query planning, and engine/backend integration. Two third-party dependency deprecation warnings are known and are not project test failures.
 
@@ -26,6 +26,7 @@ Before Phase 8, the suite had **291 passing tests** across storage, buffer pooli
 | 9 — Compound Predicate Expressions | Boolean WHERE composition with AND, OR, NOT, predicate grouping parentheses, and conventional precedence. |
 | 10 — ORDER BY + LIMIT/OFFSET | Stable in-memory ordering, ASC/DESC multi-column ORDER BY, and streaming LIMIT/OFFSET. |
 | 11 — Global Aggregation | Blocking global `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`, with WHERE before aggregation and LIMIT after it. |
+| 12 — Two-table INNER JOIN | One equality INNER JOIN across two distinct tables, qualified references, joined WHERE/ORDER BY, and pagination. |
 
 ## Architecture
 
@@ -149,7 +150,19 @@ QueryRequest → existing Planner → existing execution operators
 
 The supported grammar is a single-table `SELECT` statement with either `*` or a comma-separated column list, an optional `WHERE` comparison against an integer, float, single-quoted string, or Boolean literal, and `IS NULL` / `IS NOT NULL`. Keywords and catalog/schema resolution are case-insensitive while identifier spelling is preserved. One optional trailing semicolon is allowed.
 
-The frontend supports Boolean WHERE composition through `AND`, `OR`, prefix `NOT`, and parentheses for predicate grouping; precedence is `NOT > AND > OR`. It also supports `ORDER BY` simple source columns with ASC/DESC and multiple ordering items, plus `LIMIT` and `LIMIT ... OFFSET ...`. Strata sorts NULL values last for ASC and first for DESC. Global aggregate-only SELECT lists support `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`; WHERE runs before aggregation and LIMIT runs after it. Result schema names are valid generated identifiers such as `count_star` and `sum_age`; if a prefixed source name would exceed 64 characters, its source portion is deterministically truncated to fit. GROUP BY, HAVING, aliases, DISTINCT aggregates, aggregate-query ORDER BY, and mixing ordinary columns with global aggregate calls remain unsupported. It intentionally does not provide joins, qualified identifiers, general scalar expressions, SQL comments, multiple statements, or `StrataEngine.execute()` integration. Binding resolves only the table and translates SQL syntax to existing `QueryRequest` and predicate types; existing plans and predicates remain authoritative for column, duplicate-projection, literal-type, and ordering-column validation.
+The frontend supports Boolean WHERE composition through `AND`, `OR`, prefix `NOT`, and parentheses for predicate grouping; precedence is `NOT > AND > OR`. It also supports `ORDER BY` simple source columns with ASC/DESC and multiple ordering items, plus `LIMIT` and `LIMIT ... OFFSET ...`. Strata sorts NULL values last for ASC and first for DESC. Global aggregate-only SELECT lists support `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`; WHERE runs before aggregation and LIMIT runs after it. Result schema names are valid generated identifiers such as `count_star` and `sum_age`; if a prefixed source name would exceed 64 characters, its source portion is deterministically truncated to fit. GROUP BY, HAVING, aliases, DISTINCT aggregates, aggregate-query ORDER BY, and mixing ordinary columns with global aggregate calls remain unsupported. It intentionally does not provide general scalar expressions, SQL comments, multiple statements, or `StrataEngine.execute()` integration. Binding resolves only the table and translates SQL syntax to existing `QueryRequest` and predicate types; existing plans and predicates remain authoritative for column, duplicate-projection, literal-type, and ordering-column validation.
+
+Two-table INNER equality joins are supported with `JOIN` or `INNER JOIN`, actual table-name qualification, explicit projections, joined WHERE conditions, ORDER BY, and LIMIT/OFFSET. For example:
+
+```sql
+SELECT users.name, orders.total
+FROM users JOIN orders ON users.id = orders.user_id
+WHERE orders.total > 100
+ORDER BY orders.total DESC
+LIMIT 10;
+```
+
+Phase 12 deliberately supports exactly one join across two distinct tables. Aliases, self joins, SELECT * joins, aggregate joins, outer joins, and non-equality ON conditions remain unsupported.
 
 ## Repository structure
 

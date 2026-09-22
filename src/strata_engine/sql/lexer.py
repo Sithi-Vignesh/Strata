@@ -21,6 +21,9 @@ _KEYWORDS: dict[str, TokenType] = {
     "DESC": TokenType.DESC,
     "LIMIT": TokenType.LIMIT,
     "OFFSET": TokenType.OFFSET,
+    "JOIN": TokenType.JOIN,
+    "INNER": TokenType.INNER,
+    "ON": TokenType.ON,
 }
 
 
@@ -151,6 +154,7 @@ class Lexer:
 
         one_char_tokens = {
             "*": TokenType.STAR,
+            ".": TokenType.DOT,
             ",": TokenType.COMMA,
             ";": TokenType.SEMICOLON,
             "(": TokenType.LEFT_PAREN,

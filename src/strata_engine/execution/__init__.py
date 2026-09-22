@@ -9,6 +9,7 @@ from strata_engine.execution.exceptions import (
 )
 from strata_engine.execution.filter import Filter
 from strata_engine.execution.aggregate import Aggregate
+from strata_engine.execution.nested_loop_join import NestedLoopJoin
 from strata_engine.execution.limit import Limit
 from strata_engine.execution.operator import Operator
 from strata_engine.execution.predicate import (
@@ -36,6 +37,7 @@ __all__ = [
     "NotPredicate",
     "Filter",
     "Aggregate",
+    "NestedLoopJoin",
     "Projection",
     "Sort",
     "Limit",

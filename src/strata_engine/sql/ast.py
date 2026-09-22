@@ -8,20 +8,25 @@ from collections.abc import Sequence
 class SelectAll:
     """The explicit SQL ``*`` projection."""
 
+@dataclass(frozen=True, slots=True)
+class QualifiedIdentifier:
+    column_name: str
+    qualifier: str | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class ColumnList:
     """An explicit, ordered SQL projection."""
 
-    columns: tuple[str, ...]
+    columns: tuple[str | QualifiedIdentifier, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.columns, Sequence) or isinstance(self.columns, (str, bytes)):
             raise TypeError(
                 f"Expected sequence of column names, got {type(self.columns).__name__}."
             )
-        if not all(isinstance(column, str) for column in self.columns):
-            raise TypeError("Column names must all be strings.")
+        if not all(isinstance(column, (str, QualifiedIdentifier)) for column in self.columns):
+            raise TypeError("Column names must all be strings or QualifiedIdentifier values.")
         object.__setattr__(self, "columns", tuple(self.columns))
 
 
@@ -60,6 +65,7 @@ class ComparisonExpression(SQLPredicate):
     column_name: str
     operator: str
     value: object
+    qualifier: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +74,7 @@ class IsNullExpression(SQLPredicate):
 
     column_name: str
     is_not_null: bool = False
+    qualifier: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +106,13 @@ class OrderByItem:
 
     column_name: str
     descending: bool = False
+    qualifier: str | None = None
+
+@dataclass(frozen=True, slots=True)
+class JoinClause:
+    right_table_name: str
+    left_column: QualifiedIdentifier
+    right_column: QualifiedIdentifier
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,3 +125,4 @@ class SelectStatement:
     order_by: tuple[OrderByItem, ...] | None = None
     limit: int | None = None
     offset: int = 0
+    join: JoinClause | None = None
