@@ -17,6 +17,12 @@ class TokenType(Enum):
     NULL = auto()
     TRUE = auto()
     FALSE = auto()
+    ORDER = auto()
+    BY = auto()
+    ASC = auto()
+    DESC = auto()
+    LIMIT = auto()
+    OFFSET = auto()
 
     IDENTIFIER = auto()
     INTEGER = auto()

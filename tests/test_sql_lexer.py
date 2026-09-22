@@ -61,8 +61,28 @@ def test_lexer_recognizes_boolean_keywords_and_predicate_parentheses() -> None:
 
 
 def test_lexer_keeps_boolean_keyword_prefixes_as_identifiers() -> None:
-    tokens = Lexer("android order notify and_value oracle").tokenize()
+    tokens = Lexer("android or_value notify and_value oracle").tokenize()
     assert [token.type for token in tokens] == [TokenType.IDENTIFIER] * 5 + [TokenType.EOF]
+
+
+def test_lexer_recognizes_ordering_and_limit_keywords_as_whole_words() -> None:
+    tokens = Lexer("oRdEr BY age aSc, score dEsC LIMIT 10 OFFSET 2").tokenize()
+    assert [token.type for token in tokens] == [
+        TokenType.ORDER,
+        TokenType.BY,
+        TokenType.IDENTIFIER,
+        TokenType.ASC,
+        TokenType.COMMA,
+        TokenType.IDENTIFIER,
+        TokenType.DESC,
+        TokenType.LIMIT,
+        TokenType.INTEGER,
+        TokenType.OFFSET,
+        TokenType.INTEGER,
+        TokenType.EOF,
+    ]
+    prefixes = Lexer("ordered ordering bypass ascending description limiter offset_value").tokenize()
+    assert [token.type for token in prefixes] == [TokenType.IDENTIFIER] * 7 + [TokenType.EOF]
 
 
 def test_lexer_recognizes_numeric_string_boolean_and_null_literals() -> None:

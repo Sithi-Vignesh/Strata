@@ -11,6 +11,7 @@ from strata_engine.sql import (
     IsNullExpression,
     Lexer,
     NotExpression,
+    OrderByItem,
     OrExpression,
     Parser,
     SQLParseError,
@@ -172,5 +173,47 @@ def test_compound_ast_nodes_are_immutable() -> None:
     ],
 )
 def test_parser_rejects_malformed_compound_predicates(sql: str) -> None:
+    with pytest.raises(SQLParseError):
+        parse(sql)
+
+
+def test_parser_order_by_limit_offset_ast_fields() -> None:
+    statement = parse(
+        "SELECT name FROM users WHERE active = TRUE ORDER BY age, name ASC, id DESC LIMIT 5 OFFSET 2;"
+    )
+    assert statement.order_by == (
+        OrderByItem("age"),
+        OrderByItem("name"),
+        OrderByItem("id", True),
+    )
+    assert statement.limit == 5
+    assert statement.offset == 2
+    assert parse("SELECT * FROM users LIMIT 0").limit == 0
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM users OFFSET 1",
+        "SELECT * FROM users LIMIT 5 ORDER BY age",
+        "SELECT * FROM users ORDER BY age WHERE active = TRUE",
+        "SELECT * FROM users LIMIT 5 WHERE active = TRUE",
+        "SELECT * FROM users ORDER",
+        "SELECT * FROM users ORDER age",
+        "SELECT * FROM users ORDER BY",
+        "SELECT * FROM users ORDER BY age,",
+        "SELECT * FROM users ORDER BY , age",
+        "SELECT * FROM users ORDER BY age,,name",
+        "SELECT * FROM users ORDER BY age ASC DESC",
+        "SELECT * FROM users LIMIT",
+        "SELECT * FROM users LIMIT -1",
+        "SELECT * FROM users LIMIT 1.5",
+        "SELECT * FROM users LIMIT TRUE",
+        "SELECT * FROM users LIMIT 1 OFFSET",
+        "SELECT * FROM users LIMIT 1 OFFSET -1",
+        "SELECT * FROM users LIMIT 1 OFFSET 1.5",
+    ],
+)
+def test_parser_rejects_invalid_ordering_and_limit_syntax(sql: str) -> None:
     with pytest.raises(SQLParseError):
         parse(sql)

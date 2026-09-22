@@ -24,13 +24,16 @@ from strata_engine.execution import (
     ExecutionError,
     Filter,
     IsNullPredicate,
+    Limit,
     NotPredicate,
     OperatorClosedError,
     OrPredicate,
     Predicate,
     Projection,
+    Sort,
     TableScan,
 )
+from strata_engine.execution.sort import SortKey
 from strata_engine.schema import (
     Column,
     ColumnNotFoundError,
@@ -872,3 +875,73 @@ def test_bigint_comparison_predicate() -> None:
 
     assert p.evaluate(row1) is True
     assert p.evaluate(row2) is False
+
+
+def test_sort_orders_rows_stably_with_null_and_mixed_keys(populated_table) -> None:
+    table, schema = populated_table
+    ascending = Sort(TableScan(table), [SortKey(2)])
+    assert ascending.schema is schema
+    with ascending:
+        assert [row["id"] for row in ascending] == [4, 2, 5, 1, 3]
+
+    descending = Sort(TableScan(table), [SortKey(2, True)])
+    with descending:
+        assert [row["id"] for row in descending] == [3, 1, 5, 2, 4]
+
+    mixed = Sort(TableScan(table), [SortKey(3), SortKey(2, True)])
+    with mixed:
+        assert [row["id"] for row in mixed] == [2, 4, 3, 1, 5]
+
+
+def test_sort_lifecycle_validation_and_reopen(populated_table) -> None:
+    table, _ = populated_table
+    sort = Sort(TableScan(table), [SortKey(0, True)])
+    with pytest.raises(OperatorClosedError):
+        sort.next()
+    sort.open()
+    assert [sort.next()["id"] for _ in range(5)] == [5, 4, 3, 2, 1]
+    assert sort.next() is None
+    assert sort.next() is None
+    sort.open()
+    assert sort.next()["id"] == 5
+    sort.close()
+    sort.close()
+
+    with pytest.raises(TypeError):
+        Sort(object(), [SortKey(0)])  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        Sort(TableScan(table), [])
+    with pytest.raises(TypeError):
+        SortKey(True)
+    with pytest.raises(TypeError):
+        SortKey(0, 1)  # type: ignore[arg-type]
+
+
+def test_limit_streaming_offset_and_lifecycle(populated_table) -> None:
+    table, schema = populated_table
+    limit = Limit(TableScan(table), 2, 1)
+    assert limit.schema is schema
+    limit.open()
+    assert [limit.next()["id"], limit.next()["id"]] == [2, 3]
+    assert limit.next() is None
+    assert limit.child.is_open is True
+    limit.open()
+    assert limit.next()["id"] == 2
+    limit.close()
+
+    zero = Limit(TableScan(table), 0)
+    zero.open()
+    assert zero.next() is None
+    assert zero.child.is_open is True
+    assert zero.child.next()["id"] == 1
+    zero.close()
+    beyond = Limit(TableScan(table), 2, 10)
+    with beyond:
+        assert beyond.next() is None
+
+
+@pytest.mark.parametrize("limit, offset, exception", [(True, 0, TypeError), (1, True, TypeError), (-1, 0, ValueError), (1, -1, ValueError)])
+def test_limit_rejects_invalid_counts(populated_table, limit, offset, exception) -> None:
+    table, _ = populated_table
+    with pytest.raises(exception):
+        Limit(TableScan(table), limit, offset)

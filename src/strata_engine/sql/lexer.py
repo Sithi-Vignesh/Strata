@@ -15,6 +15,12 @@ _KEYWORDS: dict[str, TokenType] = {
     "NULL": TokenType.NULL,
     "TRUE": TokenType.TRUE,
     "FALSE": TokenType.FALSE,
+    "ORDER": TokenType.ORDER,
+    "BY": TokenType.BY,
+    "ASC": TokenType.ASC,
+    "DESC": TokenType.DESC,
+    "LIMIT": TokenType.LIMIT,
+    "OFFSET": TokenType.OFFSET,
 }
 
 

@@ -72,9 +72,20 @@ class NotExpression(SQLPredicate):
 
 
 @dataclass(frozen=True, slots=True)
+class OrderByItem:
+    """One unresolved SQL ORDER BY item."""
+
+    column_name: str
+    descending: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class SelectStatement:
     """One unresolved single-table SELECT statement."""
 
     table_name: str
     projection: SelectAll | ColumnList
     where: SQLPredicate | None
+    order_by: tuple[OrderByItem, ...] | None = None
+    limit: int | None = None
+    offset: int = 0

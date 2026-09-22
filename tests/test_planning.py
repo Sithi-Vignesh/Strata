@@ -5,15 +5,18 @@ from pathlib import Path
 import pytest
 
 from strata_engine.catalog import Table
-from strata_engine.execution import ComparisonPredicate, Filter, Projection, TableScan
+from strata_engine.execution import ComparisonPredicate, Filter, Limit, Projection, Sort, TableScan
 from strata_engine.planning import (
     FilterPlan,
+    LimitPlan,
+    OrderBy,
     Plan,
     Planner,
     PlanningError,
     ProjectionPlan,
     QueryRequest,
     TableScanPlan,
+    SortPlan,
 )
 from strata_engine.exceptions import StrataError
 from strata_engine.schema import (
@@ -263,3 +266,50 @@ def test_planned_query_executes_with_independent_operator_trees(populated_table:
 
     assert first_rows == second_rows == [("Alice", 95.5), ("Bob", 80.0)]
     assert populated_table.is_closed is False
+
+
+def test_order_by_sort_plan_and_limit_plan_contracts(populated_table: Table) -> None:
+    scan = TableScanPlan(populated_table)
+    order_by = [OrderBy("SCORE", descending=True), OrderBy("id")]
+    sort_plan = SortPlan(scan, order_by)
+    assert sort_plan.schema is scan.schema
+    assert sort_plan.order_by == tuple(order_by)
+    sort = sort_plan.create_operator()
+    assert isinstance(sort, Sort)
+    assert sort.sort_keys[0].column_index == 2
+    assert sort.child is not sort_plan.create_operator().child
+
+    limit_plan = LimitPlan(sort_plan, 0, 2)
+    assert limit_plan.schema is scan.schema
+    assert isinstance(limit_plan.create_operator(), Limit)
+    with pytest.raises(DuplicateColumnError):
+        SortPlan(scan, [OrderBy("id"), OrderBy("ID", True)])
+    with pytest.raises(ColumnNotFoundError):
+        SortPlan(scan, [OrderBy("missing")])
+    with pytest.raises(ValueError):
+        SortPlan(scan, [])
+    with pytest.raises(TypeError):
+        OrderBy("id", 1)  # type: ignore[arg-type]
+
+
+def test_query_request_ordering_limit_and_planner_shape(populated_table: Table) -> None:
+    request = QueryRequest(
+        populated_table,
+        projection=("name",),
+        order_by=[OrderBy("score", True)],  # type: ignore[arg-type]
+        limit=2,
+        offset=1,
+    )
+    assert request.order_by == (OrderBy("score", True),)
+    plan = Planner().plan(request)
+    assert isinstance(plan, LimitPlan)
+    assert isinstance(plan.child, ProjectionPlan)
+    assert isinstance(plan.child.child, SortPlan)
+    assert isinstance(plan.child.child.child, TableScanPlan)
+    assert QueryRequest(populated_table, order_by=()).order_by == ()
+    with pytest.raises(ValueError):
+        Planner().plan(QueryRequest(populated_table, order_by=()))
+    with pytest.raises(ValueError):
+        QueryRequest(populated_table, offset=1)
+    with pytest.raises(TypeError):
+        QueryRequest(populated_table, limit=True)  # type: ignore[arg-type]

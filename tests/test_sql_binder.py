@@ -12,7 +12,7 @@ from strata_engine.execution import (
     NotPredicate,
     OrPredicate,
 )
-from strata_engine.planning import Planner
+from strata_engine.planning import OrderBy, Planner
 from strata_engine.schema import (
     Column,
     ColumnNotFoundError,
@@ -132,3 +132,16 @@ def test_binder_rejects_unsupported_sql_predicate_nodes(catalog) -> None:
     statement = SelectStatement("users", SelectAll(), UnsupportedPredicate())
     with pytest.raises(SQLBindingError, match="Unsupported SQL predicate node"):
         Binder(cat).bind(statement)
+
+
+def test_binder_translates_ordering_and_defers_order_column_validation(catalog) -> None:
+    cat, _ = catalog
+    request = bind(
+        cat,
+        "SELECT name FROM users WHERE age >= 18 ORDER BY missing, age DESC LIMIT 3 OFFSET 1",
+    )
+    assert request.order_by == (OrderBy("missing"), OrderBy("age", True))
+    assert request.limit == 3
+    assert request.offset == 1
+    with pytest.raises(ColumnNotFoundError):
+        Planner().plan(request)

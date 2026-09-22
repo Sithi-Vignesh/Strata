@@ -6,7 +6,7 @@ Strata is a CSE302L / BCSE302P Database Systems project built bottom-up: first t
 
 ## Status
 
-**Phase 9 — Compound Predicate Expressions is implemented.** It extends the narrow SQL frontend and existing predicate layer with `AND`, `OR`, prefix `NOT`, and Boolean predicate grouping parentheses, using `NOT > AND > OR` precedence.
+**Phase 10 — ORDER BY + LIMIT/OFFSET is implemented.** It adds in-memory stable ordering, SQL `ORDER BY` with ASC/DESC and multiple columns, and streaming `LIMIT` / `OFFSET` over the existing planning and execution layers.
 
 Before Phase 8, the suite had **291 passing tests** across storage, buffer pooling, heap files, schema and serialization, catalog and tables, query execution, query planning, and engine/backend integration. Two third-party dependency deprecation warnings are known and are not project test failures.
 
@@ -24,6 +24,7 @@ Before Phase 8, the suite had **291 passing tests** across storage, buffer pooli
 | 7 — Query Planning | Immutable reusable plan trees that construct fresh Phase 6 operator trees. |
 | 8 — Minimal SQL SELECT Frontend + Binding | A single-table read-only SQL frontend that binds to existing QueryRequest, Planner, and operators. |
 | 9 — Compound Predicate Expressions | Boolean WHERE composition with AND, OR, NOT, predicate grouping parentheses, and conventional precedence. |
+| 10 — ORDER BY + LIMIT/OFFSET | Stable in-memory ordering, ASC/DESC multi-column ORDER BY, and streaming LIMIT/OFFSET. |
 
 ## Architecture
 
@@ -147,7 +148,7 @@ QueryRequest → existing Planner → existing execution operators
 
 The supported grammar is a single-table `SELECT` statement with either `*` or a comma-separated column list, an optional `WHERE` comparison against an integer, float, single-quoted string, or Boolean literal, and `IS NULL` / `IS NOT NULL`. Keywords and catalog/schema resolution are case-insensitive while identifier spelling is preserved. One optional trailing semicolon is allowed.
 
-The frontend supports Boolean WHERE composition through `AND`, `OR`, prefix `NOT`, and parentheses for predicate grouping; precedence is `NOT > AND > OR`. It intentionally does not provide joins, aliases, qualified names, general scalar expressions, aggregates, ordering, limits, mutations, SQL comments, multiple statements, or `StrataEngine.execute()` integration. Binding resolves only the table and translates SQL syntax to existing `QueryRequest` and predicate types; existing plans and predicates remain authoritative for column, duplicate-projection, and literal-type validation.
+The frontend supports Boolean WHERE composition through `AND`, `OR`, prefix `NOT`, and parentheses for predicate grouping; precedence is `NOT > AND > OR`. It also supports `ORDER BY` simple source columns with ASC/DESC and multiple ordering items, plus `LIMIT` and `LIMIT ... OFFSET ...`. Strata sorts NULL values last for ASC and first for DESC. It intentionally does not provide joins, aliases, qualified identifiers, general scalar expressions, aggregates, SQL comments, multiple statements, or `StrataEngine.execute()` integration. Binding resolves only the table and translates SQL syntax to existing `QueryRequest` and predicate types; existing plans and predicates remain authoritative for column, duplicate-projection, literal-type, and ordering-column validation.
 
 ## Repository structure
 
@@ -245,7 +246,7 @@ curl http://127.0.0.1:8000/health
 The engine and application are intentionally incomplete. The following are not implemented:
 
 - query optimizer, cost model, or statistics
-- joins, aggregates, GROUP BY, ORDER BY, DISTINCT, LIMIT/OFFSET, or subqueries
+- joins, aggregates, GROUP BY, DISTINCT, subqueries, or advanced ordering features
 - secondary indexes
 - mutation planning or execution
 - transactions, concurrency control, WAL, or recovery

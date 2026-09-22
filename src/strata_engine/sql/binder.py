@@ -9,7 +9,7 @@ from strata_engine.execution import (
     OrPredicate,
     Predicate,
 )
-from strata_engine.planning import QueryRequest
+from strata_engine.planning import OrderBy, QueryRequest
 from strata_engine.sql.ast import (
     AndExpression,
     ColumnList,
@@ -17,6 +17,7 @@ from strata_engine.sql.ast import (
     IsNullExpression,
     NotExpression,
     OrExpression,
+    OrderByItem,
     SQLPredicate,
     SelectAll,
     SelectStatement,
@@ -46,8 +47,20 @@ class Binder:
             raise SQLBindingError("Unsupported SQL projection node.")
 
         predicate = self._bind_predicate(statement.where) if statement.where is not None else None
+        order_by = (
+            tuple(OrderBy(item.column_name, item.descending) for item in statement.order_by)
+            if statement.order_by is not None
+            else None
+        )
 
-        return QueryRequest(table=table, predicate=predicate, projection=projection)
+        return QueryRequest(
+            table=table,
+            predicate=predicate,
+            projection=projection,
+            order_by=order_by,
+            limit=statement.limit,
+            offset=statement.offset,
+        )
 
     def _bind_predicate(self, predicate: SQLPredicate) -> Predicate:
         """Translate an unresolved SQL predicate tree to execution predicates."""

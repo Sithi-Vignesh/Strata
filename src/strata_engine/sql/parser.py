@@ -8,6 +8,7 @@ from strata_engine.sql.ast import (
     ComparisonExpression,
     IsNullExpression,
     NotExpression,
+    OrderByItem,
     OrExpression,
     SQLPredicate,
     SelectAll,
@@ -52,11 +53,30 @@ class Parser:
         if self._match(TokenType.WHERE):
             where = self._predicate()
 
+        order_by: tuple[OrderByItem, ...] | None = None
+        if self._match(TokenType.ORDER):
+            self._consume(TokenType.BY, "BY after ORDER")
+            order_by = self._order_by()
+
+        limit: int | None = None
+        offset = 0
+        if self._match(TokenType.LIMIT):
+            limit = self._consume_non_negative_integer("LIMIT value")
+            if self._match(TokenType.OFFSET):
+                offset = self._consume_non_negative_integer("OFFSET value")
+
         self._match(TokenType.SEMICOLON)
         self._consume(TokenType.EOF, "end of statement")
         if self._current != len(self._tokens):
             self._raise_expected("end of token stream")
-        return SelectStatement(table_name=table_name, projection=projection, where=where)
+        return SelectStatement(
+            table_name=table_name,
+            projection=projection,
+            where=where,
+            order_by=order_by,
+            limit=limit,
+            offset=offset,
+        )
 
     def _projection(self) -> SelectAll | ColumnList:
         if self._match(TokenType.STAR):
@@ -69,6 +89,28 @@ class Parser:
 
     def _predicate(self) -> SQLPredicate:
         return self._or_expression()
+
+    def _order_by(self) -> tuple[OrderByItem, ...]:
+        items = [self._order_item()]
+        while self._match(TokenType.COMMA):
+            items.append(self._order_item())
+        return tuple(items)
+
+    def _order_item(self) -> OrderByItem:
+        column_name = self._consume(TokenType.IDENTIFIER, "ORDER BY column").lexeme
+        descending = False
+        if self._match(TokenType.DESC):
+            descending = True
+        else:
+            self._match(TokenType.ASC)
+        return OrderByItem(column_name, descending)
+
+    def _consume_non_negative_integer(self, expected: str) -> int:
+        token = self._peek()
+        if token.type != TokenType.INTEGER or type(token.literal) is not int or token.literal < 0:
+            self._raise_expected(f"non-negative integer {expected}")
+        self._advance()
+        return token.literal
 
     def _or_expression(self) -> SQLPredicate:
         predicate = self._and_expression()

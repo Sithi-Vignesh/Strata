@@ -17,18 +17,22 @@ from strata_engine.engine import StrataEngine
 from strata_engine.exceptions import StrataError
 from strata_engine.planning import (
     FilterPlan,
+    LimitPlan,
+    OrderBy,
     Plan,
     Planner,
     PlanningError,
     ProjectionPlan,
     QueryRequest,
     TableScanPlan,
+    SortPlan,
 )
 from strata_engine.execution import (
     AndPredicate,
     ComparisonPredicate,
     ExecutionError,
     Filter,
+    Limit,
     IsNullPredicate,
     NotPredicate,
     Operator,
@@ -36,6 +40,7 @@ from strata_engine.execution import (
     OrPredicate,
     Predicate,
     Projection,
+    Sort,
     TableScan,
 )
 from strata_engine.sql import (
@@ -108,6 +113,9 @@ __all__ = [
     "TableScanPlan",
     "FilterPlan",
     "ProjectionPlan",
+    "SortPlan",
+    "LimitPlan",
+    "OrderBy",
     "QueryRequest",
     "Planner",
     # Schema & Types
@@ -182,6 +190,8 @@ __all__ = [
     "NotPredicate",
     "Filter",
     "Projection",
+    "Sort",
+    "Limit",
     # SQL frontend
     "Lexer",
     "Parser",

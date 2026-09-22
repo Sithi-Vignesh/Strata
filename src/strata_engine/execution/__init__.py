@@ -8,6 +8,7 @@ from strata_engine.execution.exceptions import (
     OperatorClosedError,
 )
 from strata_engine.execution.filter import Filter
+from strata_engine.execution.limit import Limit
 from strata_engine.execution.operator import Operator
 from strata_engine.execution.predicate import (
     AndPredicate,
@@ -18,6 +19,7 @@ from strata_engine.execution.predicate import (
     Predicate,
 )
 from strata_engine.execution.projection import Projection
+from strata_engine.execution.sort import Sort
 from strata_engine.execution.table_scan import TableScan
 
 __all__ = [
@@ -33,4 +35,6 @@ __all__ = [
     "NotPredicate",
     "Filter",
     "Projection",
+    "Sort",
+    "Limit",
 ]
