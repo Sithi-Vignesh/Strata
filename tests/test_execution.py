@@ -19,11 +19,15 @@ import pytest
 
 from strata_engine.catalog.table import Table
 from strata_engine.execution import (
+    AndPredicate,
     ComparisonPredicate,
     ExecutionError,
     Filter,
     IsNullPredicate,
+    NotPredicate,
     OperatorClosedError,
+    OrPredicate,
+    Predicate,
     Projection,
     TableScan,
 )
@@ -42,6 +46,27 @@ from strata_engine.storage import (
     PageFile,
     StorageClosedError,
 )
+
+
+class StubPredicate(Predicate):
+    """Small predicate double for compound-predicate behavior tests."""
+
+    def __init__(self, result: object = True, error: Exception | None = None) -> None:
+        self.result = result
+        self.error = error
+        self.validate_calls = 0
+        self.evaluate_calls = 0
+
+    def validate(self, schema: Schema) -> None:
+        self.validate_calls += 1
+        if self.error is not None:
+            raise self.error
+
+    def evaluate(self, row: Tuple) -> bool:
+        self.evaluate_calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.result  # type: ignore[return-value]
 
 
 # ============================================================================
@@ -716,6 +741,95 @@ def test_predicate_non_bool_raises_execution_error(populated_table) -> None:
     assert flt.is_open is False
 
 
+@pytest.mark.parametrize(
+    ("predicate", "expected"),
+    [
+        (AndPredicate(StubPredicate(True), StubPredicate(True)), True),
+        (AndPredicate(StubPredicate(True), StubPredicate(False)), False),
+        (OrPredicate(StubPredicate(False), StubPredicate(True)), True),
+        (OrPredicate(StubPredicate(False), StubPredicate(False)), False),
+        (NotPredicate(StubPredicate(True)), False),
+        (NotPredicate(StubPredicate(False)), True),
+    ],
+)
+def test_compound_predicate_boolean_results(sample_schema, predicate, expected: bool) -> None:
+    row = Tuple([1, "Alice", 95.0, True], schema=sample_schema)
+    assert predicate.evaluate(row) is expected
+
+
+def test_compound_predicates_short_circuit(sample_schema) -> None:
+    row = Tuple([1, "Alice", 95.0, True], schema=sample_schema)
+    skipped_and = StubPredicate(error=AssertionError("AND evaluated its right child"))
+    skipped_or = StubPredicate(error=AssertionError("OR evaluated its right child"))
+
+    assert AndPredicate(StubPredicate(False), skipped_and).evaluate(row) is False
+    assert skipped_and.evaluate_calls == 0
+    assert OrPredicate(StubPredicate(True), skipped_or).evaluate(row) is True
+    assert skipped_or.evaluate_calls == 0
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        AndPredicate(StubPredicate("bad"), StubPredicate(True)),
+        AndPredicate(StubPredicate(True), StubPredicate("bad")),
+        OrPredicate(StubPredicate("bad"), StubPredicate(False)),
+        OrPredicate(StubPredicate(False), StubPredicate("bad")),
+        NotPredicate(StubPredicate("bad")),
+    ],
+)
+def test_compound_predicates_reject_evaluated_non_bool_children(sample_schema, predicate) -> None:
+    row = Tuple([1, "Alice", 95.0, True], schema=sample_schema)
+    with pytest.raises(ExecutionError, match="returned non-bool"):
+        predicate.evaluate(row)
+
+
+def test_compound_predicates_skip_non_bool_children_when_short_circuited(sample_schema) -> None:
+    row = Tuple([1, "Alice", 95.0, True], schema=sample_schema)
+    assert AndPredicate(StubPredicate(False), StubPredicate("bad")).evaluate(row) is False
+    assert OrPredicate(StubPredicate(True), StubPredicate("bad")).evaluate(row) is True
+
+
+def test_compound_predicates_validate_recursively_and_propagate_child_errors(sample_schema) -> None:
+    left = StubPredicate()
+    right = StubPredicate()
+    predicate = NotPredicate(AndPredicate(left, right))
+    predicate.validate(sample_schema)
+    assert left.validate_calls == right.validate_calls == 1
+
+    with pytest.raises(ColumnNotFoundError):
+        AndPredicate(ComparisonPredicate("missing", "=", 1), StubPredicate()).validate(sample_schema)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: AndPredicate(StubPredicate(), object()),
+        lambda: OrPredicate(object(), StubPredicate()),
+        lambda: NotPredicate(object()),
+    ],
+)
+def test_compound_predicates_reject_non_predicate_children(factory) -> None:
+    with pytest.raises(TypeError):
+        factory()
+
+
+def test_compound_predicate_child_properties_are_read_only() -> None:
+    predicate = AndPredicate(StubPredicate(), StubPredicate())
+    with pytest.raises(AttributeError):
+        predicate.left = StubPredicate()  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        predicate.right = StubPredicate()  # type: ignore[misc]
+
+    negation = NotPredicate(StubPredicate())
+    with pytest.raises(AttributeError):
+        negation.child = StubPredicate()  # type: ignore[misc]
+
+    disjunction = OrPredicate(StubPredicate(), StubPredicate())
+    with pytest.raises(AttributeError):
+        disjunction.left = StubPredicate()  # type: ignore[misc]
+
+
 def test_projection_reordered_fingerprint_distinct(populated_table) -> None:
     """Verify reordering projected columns produces a unique, distinct Schema fingerprint."""
     tbl, _ = populated_table
@@ -758,4 +872,3 @@ def test_bigint_comparison_predicate() -> None:
 
     assert p.evaluate(row1) is True
     assert p.evaluate(row2) is False
-

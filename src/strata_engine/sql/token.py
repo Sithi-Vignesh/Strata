@@ -1,4 +1,4 @@
-"""Immutable lexical tokens for the Phase 8 SQL subset."""
+"""Immutable lexical tokens for the deliberately small SQL subset."""
 
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -12,6 +12,8 @@ class TokenType(Enum):
     WHERE = auto()
     IS = auto()
     NOT = auto()
+    AND = auto()
+    OR = auto()
     NULL = auto()
     TRUE = auto()
     FALSE = auto()
@@ -24,6 +26,8 @@ class TokenType(Enum):
     STAR = auto()
     COMMA = auto()
     SEMICOLON = auto()
+    LEFT_PAREN = auto()
+    RIGHT_PAREN = auto()
     EQUAL = auto()
     NOT_EQUAL = auto()
     LESS = auto()

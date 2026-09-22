@@ -5,10 +5,13 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from strata_engine.sql import (
+    AndExpression,
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
     Lexer,
+    NotExpression,
+    OrExpression,
     Parser,
     SQLParseError,
     SelectAll,
@@ -99,3 +102,75 @@ def test_column_list_normalizes_mutable_sequence() -> None:
     projection = ColumnList(columns)  # type: ignore[arg-type]
     columns[:] = ["id"]
     assert projection.columns == ("name", "age")
+
+
+def test_parser_compound_predicate_ast_shapes_and_precedence() -> None:
+    statement = parse("SELECT * FROM users WHERE a = 1 OR b = 2 AND c = 3")
+    assert statement.where == OrExpression(
+        ComparisonExpression("a", "=", 1),
+        AndExpression(ComparisonExpression("b", "=", 2), ComparisonExpression("c", "=", 3)),
+    )
+
+    statement = parse("SELECT * FROM users WHERE NOT a = 1 AND b = 2")
+    assert statement.where == AndExpression(
+        NotExpression(ComparisonExpression("a", "=", 1)), ComparisonExpression("b", "=", 2)
+    )
+
+
+def test_parser_parentheses_not_and_left_associativity() -> None:
+    statement = parse("SELECT * FROM users WHERE NOT (a = 1 OR b = 2) AND c = 3")
+    assert statement.where == AndExpression(
+        NotExpression(
+            OrExpression(ComparisonExpression("a", "=", 1), ComparisonExpression("b", "=", 2))
+        ),
+        ComparisonExpression("c", "=", 3),
+    )
+
+    assert parse("SELECT * FROM users WHERE (a = 1 OR b = 2) AND c = 3").where == AndExpression(
+        OrExpression(ComparisonExpression("a", "=", 1), ComparisonExpression("b", "=", 2)),
+        ComparisonExpression("c", "=", 3),
+    )
+
+    assert parse("SELECT * FROM users WHERE a = 1 AND b = 2 AND c = 3").where == AndExpression(
+        AndExpression(ComparisonExpression("a", "=", 1), ComparisonExpression("b", "=", 2)),
+        ComparisonExpression("c", "=", 3),
+    )
+    assert parse("SELECT * FROM users WHERE a = 1 OR b = 2 OR c = 3").where == OrExpression(
+        OrExpression(ComparisonExpression("a", "=", 1), ComparisonExpression("b", "=", 2)),
+        ComparisonExpression("c", "=", 3),
+    )
+
+
+def test_parser_compound_predicates_preserve_is_not_null() -> None:
+    assert parse("SELECT * FROM users WHERE nickname IS NOT NULL OR NOT active = TRUE").where == OrExpression(
+        IsNullExpression("nickname", True), NotExpression(ComparisonExpression("active", "=", True))
+    )
+    assert parse("SELECT * FROM users WHERE NOT nickname IS NULL").where == NotExpression(
+        IsNullExpression("nickname")
+    )
+
+
+def test_compound_ast_nodes_are_immutable() -> None:
+    expression = AndExpression(ComparisonExpression("a", "=", 1), ComparisonExpression("b", "=", 2))
+    with pytest.raises((AttributeError, FrozenInstanceError, TypeError)):
+        expression.left = ComparisonExpression("c", "=", 3)  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM users WHERE AND age = 1",
+        "SELECT * FROM users WHERE OR age = 1",
+        "SELECT * FROM users WHERE age = 1 AND",
+        "SELECT * FROM users WHERE age = 1 OR",
+        "SELECT * FROM users WHERE NOT",
+        "SELECT * FROM users WHERE ()",
+        "SELECT * FROM users WHERE (age = 1",
+        "SELECT * FROM users WHERE age = 1)",
+        "SELECT * FROM users WHERE (OR age = 1)",
+        "SELECT (name) FROM users",
+    ],
+)
+def test_parser_rejects_malformed_compound_predicates(sql: str) -> None:
+    with pytest.raises(SQLParseError):
+        parse(sql)

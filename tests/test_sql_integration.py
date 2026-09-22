@@ -50,6 +50,24 @@ def populated_catalog(tmp_path: Path):
         ("SELECT name FROM users WHERE nickname IS NOT NULL;", [("Bob",), ("Carol",)]),
         ("SELECT name FROM users WHERE active = TRUE;", [("Alice",), ("Carol",)]),
         ("SELECT name FROM users WHERE name = 'Alice';", [("Alice",)]),
+        (
+            "SELECT name FROM users WHERE age >= 18 AND active = TRUE;",
+            [("Alice",), ("Carol",)],
+        ),
+        ("SELECT name FROM users WHERE age < 18 OR age >= 65;", [("Bob",)]),
+        ("SELECT name FROM users WHERE NOT active = TRUE;", [("Bob",)]),
+        (
+            "SELECT name FROM users WHERE nickname IS NULL OR active = FALSE;",
+            [("Alice",), ("Bob",)],
+        ),
+        (
+            "SELECT name FROM users WHERE age < 18 OR active = TRUE AND nickname IS NULL;",
+            [("Alice",), ("Bob",)],
+        ),
+        (
+            "SELECT name FROM users WHERE (age < 18 OR active = TRUE) AND nickname IS NULL;",
+            [("Alice",)],
+        ),
     ],
 )
 def test_sql_pipeline_executes_through_planner(populated_catalog, sql: str, expected) -> None:

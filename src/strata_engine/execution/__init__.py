@@ -10,8 +10,11 @@ from strata_engine.execution.exceptions import (
 from strata_engine.execution.filter import Filter
 from strata_engine.execution.operator import Operator
 from strata_engine.execution.predicate import (
+    AndPredicate,
     ComparisonPredicate,
     IsNullPredicate,
+    NotPredicate,
+    OrPredicate,
     Predicate,
 )
 from strata_engine.execution.projection import Projection
@@ -25,6 +28,9 @@ __all__ = [
     "Predicate",
     "ComparisonPredicate",
     "IsNullPredicate",
+    "AndPredicate",
+    "OrPredicate",
+    "NotPredicate",
     "Filter",
     "Projection",
 ]

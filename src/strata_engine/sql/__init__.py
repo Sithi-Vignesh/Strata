@@ -1,9 +1,12 @@
 """Minimal SQL SELECT frontend: lexer, parser, AST, and binder."""
 
 from strata_engine.sql.ast import (
+    AndExpression,
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
+    NotExpression,
+    OrExpression,
     SQLPredicate,
     SelectAll,
     SelectStatement,
@@ -27,6 +30,9 @@ __all__ = [
     "SQLPredicate",
     "ComparisonExpression",
     "IsNullExpression",
+    "AndExpression",
+    "OrExpression",
+    "NotExpression",
     "SelectStatement",
     "Parser",
     "Binder",

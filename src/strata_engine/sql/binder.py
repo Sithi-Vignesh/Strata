@@ -1,12 +1,23 @@
 """Binding from unresolved SQL syntax to existing Strata query requests."""
 
 from strata_engine.catalog import Catalog
-from strata_engine.execution import ComparisonPredicate, IsNullPredicate, Predicate
+from strata_engine.execution import (
+    AndPredicate,
+    ComparisonPredicate,
+    IsNullPredicate,
+    NotPredicate,
+    OrPredicate,
+    Predicate,
+)
 from strata_engine.planning import QueryRequest
 from strata_engine.sql.ast import (
+    AndExpression,
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
+    NotExpression,
+    OrExpression,
+    SQLPredicate,
     SelectAll,
     SelectStatement,
 )
@@ -34,19 +45,24 @@ class Binder:
         else:
             raise SQLBindingError("Unsupported SQL projection node.")
 
-        predicate: Predicate | None = None
-        if isinstance(statement.where, ComparisonExpression):
-            predicate = ComparisonPredicate(
-                statement.where.column_name,
-                statement.where.operator,
-                statement.where.value,
-            )
-        elif isinstance(statement.where, IsNullExpression):
-            predicate = IsNullPredicate(
-                statement.where.column_name,
-                is_not_null=statement.where.is_not_null,
-            )
-        elif statement.where is not None:
-            raise SQLBindingError("Unsupported SQL predicate node.")
+        predicate = self._bind_predicate(statement.where) if statement.where is not None else None
 
         return QueryRequest(table=table, predicate=predicate, projection=projection)
+
+    def _bind_predicate(self, predicate: SQLPredicate) -> Predicate:
+        """Translate an unresolved SQL predicate tree to execution predicates."""
+        if isinstance(predicate, ComparisonExpression):
+            return ComparisonPredicate(predicate.column_name, predicate.operator, predicate.value)
+        if isinstance(predicate, IsNullExpression):
+            return IsNullPredicate(predicate.column_name, is_not_null=predicate.is_not_null)
+        if isinstance(predicate, AndExpression):
+            return AndPredicate(
+                self._bind_predicate(predicate.left), self._bind_predicate(predicate.right)
+            )
+        if isinstance(predicate, OrExpression):
+            return OrPredicate(
+                self._bind_predicate(predicate.left), self._bind_predicate(predicate.right)
+            )
+        if isinstance(predicate, NotExpression):
+            return NotPredicate(self._bind_predicate(predicate.child))
+        raise SQLBindingError("Unsupported SQL predicate node.")

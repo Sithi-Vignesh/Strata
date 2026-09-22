@@ -1,4 +1,4 @@
-"""Hand-written lexer for the deliberately small Phase 8 SQL grammar."""
+"""Hand-written lexer for the deliberately small SQL grammar."""
 
 from strata_engine.sql.exceptions import SQLLexError
 from strata_engine.sql.token import Token, TokenType
@@ -10,6 +10,8 @@ _KEYWORDS: dict[str, TokenType] = {
     "WHERE": TokenType.WHERE,
     "IS": TokenType.IS,
     "NOT": TokenType.NOT,
+    "AND": TokenType.AND,
+    "OR": TokenType.OR,
     "NULL": TokenType.NULL,
     "TRUE": TokenType.TRUE,
     "FALSE": TokenType.FALSE,
@@ -17,7 +19,7 @@ _KEYWORDS: dict[str, TokenType] = {
 
 
 class Lexer:
-    """Convert one Phase 8 SQL statement into immutable tokens."""
+    """Convert one SQL statement in the supported subset into immutable tokens."""
 
     def __init__(self, sql: str) -> None:
         if not isinstance(sql, str):
@@ -145,6 +147,8 @@ class Lexer:
             "*": TokenType.STAR,
             ",": TokenType.COMMA,
             ";": TokenType.SEMICOLON,
+            "(": TokenType.LEFT_PAREN,
+            ")": TokenType.RIGHT_PAREN,
             "=": TokenType.EQUAL,
             "<": TokenType.LESS,
             ">": TokenType.GREATER,

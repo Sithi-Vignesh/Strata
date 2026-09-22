@@ -3,9 +3,12 @@
 from collections.abc import Sequence
 
 from strata_engine.sql.ast import (
+    AndExpression,
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
+    NotExpression,
+    OrExpression,
     SQLPredicate,
     SelectAll,
     SelectStatement,
@@ -65,6 +68,33 @@ class Parser:
         return ColumnList(tuple(columns))
 
     def _predicate(self) -> SQLPredicate:
+        return self._or_expression()
+
+    def _or_expression(self) -> SQLPredicate:
+        predicate = self._and_expression()
+        while self._match(TokenType.OR):
+            predicate = OrExpression(predicate, self._and_expression())
+        return predicate
+
+    def _and_expression(self) -> SQLPredicate:
+        predicate = self._not_expression()
+        while self._match(TokenType.AND):
+            predicate = AndExpression(predicate, self._not_expression())
+        return predicate
+
+    def _not_expression(self) -> SQLPredicate:
+        if self._match(TokenType.NOT):
+            return NotExpression(self._not_expression())
+        return self._predicate_primary()
+
+    def _predicate_primary(self) -> SQLPredicate:
+        if self._match(TokenType.LEFT_PAREN):
+            predicate = self._predicate()
+            self._consume(TokenType.RIGHT_PAREN, "')' after predicate")
+            return predicate
+        return self._leaf_predicate()
+
+    def _leaf_predicate(self) -> SQLPredicate:
         column_name = self._consume(TokenType.IDENTIFIER, "predicate column").lexeme
         if self._match(TokenType.IS):
             is_not_null = self._match(TokenType.NOT)

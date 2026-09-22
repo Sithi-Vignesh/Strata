@@ -45,6 +45,26 @@ def test_lexer_recognizes_punctuation_and_all_comparison_spellings() -> None:
     ]
 
 
+def test_lexer_recognizes_boolean_keywords_and_predicate_parentheses() -> None:
+    tokens = Lexer("a AnD b oR NOT (c)").tokenize()
+    assert [token.type for token in tokens] == [
+        TokenType.IDENTIFIER,
+        TokenType.AND,
+        TokenType.IDENTIFIER,
+        TokenType.OR,
+        TokenType.NOT,
+        TokenType.LEFT_PAREN,
+        TokenType.IDENTIFIER,
+        TokenType.RIGHT_PAREN,
+        TokenType.EOF,
+    ]
+
+
+def test_lexer_keeps_boolean_keyword_prefixes_as_identifiers() -> None:
+    tokens = Lexer("android order notify and_value oracle").tokenize()
+    assert [token.type for token in tokens] == [TokenType.IDENTIFIER] * 5 + [TokenType.EOF]
+
+
 def test_lexer_recognizes_numeric_string_boolean_and_null_literals() -> None:
     tokens = Lexer("0 -1 3.14 -2.5 'Alice' '' 'O''Brien' FALSE NULL").tokenize()
     assert [token.literal for token in tokens[:-1]] == [

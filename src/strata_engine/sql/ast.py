@@ -1,4 +1,4 @@
-"""Immutable unresolved syntax tree nodes for the Phase 8 SQL subset."""
+"""Immutable unresolved syntax tree nodes for the supported SQL subset."""
 
 from dataclasses import dataclass
 from collections.abc import Sequence
@@ -26,7 +26,7 @@ class ColumnList:
 
 
 class SQLPredicate:
-    """Marker base class for the two supported WHERE predicate forms."""
+    """Marker base class for supported WHERE predicate forms."""
 
     __slots__ = ()
 
@@ -46,6 +46,29 @@ class IsNullExpression(SQLPredicate):
 
     column_name: str
     is_not_null: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AndExpression(SQLPredicate):
+    """An unresolved Boolean conjunction."""
+
+    left: SQLPredicate
+    right: SQLPredicate
+
+
+@dataclass(frozen=True, slots=True)
+class OrExpression(SQLPredicate):
+    """An unresolved Boolean disjunction."""
+
+    left: SQLPredicate
+    right: SQLPredicate
+
+
+@dataclass(frozen=True, slots=True)
+class NotExpression(SQLPredicate):
+    """An unresolved Boolean negation."""
+
+    child: SQLPredicate
 
 
 @dataclass(frozen=True, slots=True)

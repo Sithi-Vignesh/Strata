@@ -25,12 +25,15 @@ from strata_engine.planning import (
     TableScanPlan,
 )
 from strata_engine.execution import (
+    AndPredicate,
     ComparisonPredicate,
     ExecutionError,
     Filter,
     IsNullPredicate,
+    NotPredicate,
     Operator,
     OperatorClosedError,
+    OrPredicate,
     Predicate,
     Projection,
     TableScan,
@@ -174,6 +177,9 @@ __all__ = [
     "Predicate",
     "ComparisonPredicate",
     "IsNullPredicate",
+    "AndPredicate",
+    "OrPredicate",
+    "NotPredicate",
     "Filter",
     "Projection",
     # SQL frontend

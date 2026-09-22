@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 from strata_engine.catalog import Catalog, Table, TableNotFoundError
-from strata_engine.execution import ComparisonPredicate, IsNullPredicate
+from strata_engine.execution import (
+    AndPredicate,
+    ComparisonPredicate,
+    IsNullPredicate,
+    NotPredicate,
+    OrPredicate,
+)
 from strata_engine.planning import Planner
 from strata_engine.schema import (
     Column,
@@ -15,7 +21,8 @@ from strata_engine.schema import (
     Schema,
     TypeMismatchError,
 )
-from strata_engine.sql import Binder, Lexer, Parser
+from strata_engine.sql import Binder, Lexer, Parser, SQLBindingError
+from strata_engine.sql.ast import SQLPredicate, SelectAll, SelectStatement
 from strata_engine.storage import StorageClosedError
 
 
@@ -100,3 +107,28 @@ def test_binder_preserves_existing_planning_validation_boundaries(catalog) -> No
     incompatible_literal = bind(cat, "SELECT * FROM users WHERE age = 'abc'")
     with pytest.raises(TypeMismatchError):
         Planner().plan(incompatible_literal)
+
+
+def test_binder_recursively_translates_compound_predicates(catalog) -> None:
+    cat, _ = catalog
+    request = bind(
+        cat,
+        "SELECT * FROM users WHERE NOT (age >= 18 AND (nickname IS NULL OR age < 65))",
+    )
+
+    assert isinstance(request.predicate, NotPredicate)
+    assert isinstance(request.predicate.child, AndPredicate)
+    assert isinstance(request.predicate.child.left, ComparisonPredicate)
+    assert isinstance(request.predicate.child.right, OrPredicate)
+    assert isinstance(request.predicate.child.right.left, IsNullPredicate)
+    assert isinstance(request.predicate.child.right.right, ComparisonPredicate)
+
+
+def test_binder_rejects_unsupported_sql_predicate_nodes(catalog) -> None:
+    class UnsupportedPredicate(SQLPredicate):
+        pass
+
+    cat, _ = catalog
+    statement = SelectStatement("users", SelectAll(), UnsupportedPredicate())
+    with pytest.raises(SQLBindingError, match="Unsupported SQL predicate node"):
+        Binder(cat).bind(statement)

@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
+from strata_engine.execution.exceptions import ExecutionError
 from strata_engine.schema.data_type import DataType
 from strata_engine.schema.exceptions import TypeMismatchError
 from strata_engine.schema.schema import Schema
@@ -192,3 +193,129 @@ class IsNullPredicate(Predicate):
     def __repr__(self) -> str:
         kind = "IS NOT NULL" if self._is_not_null else "IS NULL"
         return f"IsNullPredicate(column='{self._column_name}', {kind})"
+
+
+class AndPredicate(Predicate):
+    """Evaluates two predicates using short-circuit Boolean AND."""
+
+    __slots__ = ("_left", "_right")
+
+    def __init__(self, left: Predicate, right: Predicate) -> None:
+        """Initialize an AND predicate from two child predicates."""
+        if not isinstance(left, Predicate):
+            raise TypeError(f"Expected Predicate instance for left, got {type(left).__name__}.")
+        if not isinstance(right, Predicate):
+            raise TypeError(f"Expected Predicate instance for right, got {type(right).__name__}.")
+        self._left = left
+        self._right = right
+
+    @property
+    def left(self) -> Predicate:
+        """Return the left child predicate."""
+        return self._left
+
+    @property
+    def right(self) -> Predicate:
+        """Return the right child predicate."""
+        return self._right
+
+    def validate(self, schema: Schema) -> None:
+        """Validate both child predicates against the input schema."""
+        self._left.validate(schema)
+        self._right.validate(schema)
+
+    def evaluate(self, row: Tuple) -> bool:
+        """Evaluate children with exact-bool enforcement and short-circuiting."""
+        left_result = self._left.evaluate(row)
+        _require_bool_result(self._left, left_result)
+        if left_result is False:
+            return False
+
+        right_result = self._right.evaluate(row)
+        _require_bool_result(self._right, right_result)
+        return right_result
+
+    def __repr__(self) -> str:
+        return f"AndPredicate(left={self._left!r}, right={self._right!r})"
+
+
+class OrPredicate(Predicate):
+    """Evaluates two predicates using short-circuit Boolean OR."""
+
+    __slots__ = ("_left", "_right")
+
+    def __init__(self, left: Predicate, right: Predicate) -> None:
+        """Initialize an OR predicate from two child predicates."""
+        if not isinstance(left, Predicate):
+            raise TypeError(f"Expected Predicate instance for left, got {type(left).__name__}.")
+        if not isinstance(right, Predicate):
+            raise TypeError(f"Expected Predicate instance for right, got {type(right).__name__}.")
+        self._left = left
+        self._right = right
+
+    @property
+    def left(self) -> Predicate:
+        """Return the left child predicate."""
+        return self._left
+
+    @property
+    def right(self) -> Predicate:
+        """Return the right child predicate."""
+        return self._right
+
+    def validate(self, schema: Schema) -> None:
+        """Validate both child predicates against the input schema."""
+        self._left.validate(schema)
+        self._right.validate(schema)
+
+    def evaluate(self, row: Tuple) -> bool:
+        """Evaluate children with exact-bool enforcement and short-circuiting."""
+        left_result = self._left.evaluate(row)
+        _require_bool_result(self._left, left_result)
+        if left_result is True:
+            return True
+
+        right_result = self._right.evaluate(row)
+        _require_bool_result(self._right, right_result)
+        return right_result
+
+    def __repr__(self) -> str:
+        return f"OrPredicate(left={self._left!r}, right={self._right!r})"
+
+
+class NotPredicate(Predicate):
+    """Evaluates one predicate using Boolean NOT."""
+
+    __slots__ = ("_child",)
+
+    def __init__(self, child: Predicate) -> None:
+        """Initialize a NOT predicate from one child predicate."""
+        if not isinstance(child, Predicate):
+            raise TypeError(f"Expected Predicate instance for child, got {type(child).__name__}.")
+        self._child = child
+
+    @property
+    def child(self) -> Predicate:
+        """Return the child predicate."""
+        return self._child
+
+    def validate(self, schema: Schema) -> None:
+        """Validate the child predicate against the input schema."""
+        self._child.validate(schema)
+
+    def evaluate(self, row: Tuple) -> bool:
+        """Evaluate the child with exact-bool enforcement, then negate it."""
+        result = self._child.evaluate(row)
+        _require_bool_result(self._child, result)
+        return not result
+
+    def __repr__(self) -> str:
+        return f"NotPredicate(child={self._child!r})"
+
+
+def _require_bool_result(predicate: Predicate, result: object) -> None:
+    """Raise when a composed predicate child violates the exact-bool contract."""
+    if type(result) is not bool:
+        raise ExecutionError(
+            f"Predicate {predicate!r} returned non-bool {type(result).__name__}."
+        )
