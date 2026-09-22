@@ -15,6 +15,15 @@ from strata_engine.catalog import (
 )
 from strata_engine.engine import StrataEngine
 from strata_engine.exceptions import StrataError
+from strata_engine.planning import (
+    FilterPlan,
+    Plan,
+    Planner,
+    PlanningError,
+    ProjectionPlan,
+    QueryRequest,
+    TableScanPlan,
+)
 from strata_engine.execution import (
     ComparisonPredicate,
     ExecutionError,
@@ -81,6 +90,14 @@ __all__ = [
     # Engine
     "StrataEngine",
     "StrataError",
+    # Planning
+    "PlanningError",
+    "Plan",
+    "TableScanPlan",
+    "FilterPlan",
+    "ProjectionPlan",
+    "QueryRequest",
+    "Planner",
     # Schema & Types
     "DataType",
     "Column",

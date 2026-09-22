@@ -1,146 +1,215 @@
 # Strata
 
-> **Collaborative project and task-management application powered by a custom relational database engine written from scratch in Python.**
+> **Collaborative project and task-management application intended to be powered by a custom relational database engine written from scratch in Python.**
 
----
+Strata is a CSE302L / BCSE302P Database Systems project built bottom-up: first the database engine, then the application-domain backend and frontend. It uses no external database engine or ORM.
 
-## 1. Academic Context
+## Status
 
-- **Course**: CSE302L — Database Systems
-- **Lab**: BCSE302P — Database Systems Lab
+**Phase 7 — Query Planning is complete.** Phase 0 through Phase 7 are implemented and verified. The Phase 7 planning layer has 22 targeted passing tests.
 
-The long-term objective of Strata is to demonstrate core database management system principles by engineering a relational database engine from scratch in Python, and powering a collaborative task-management application backend on top of it.
+The current suite has **291 passing tests** across storage, buffer pooling, heap files, schema and serialization, catalog and tables, query execution, query planning, and engine/backend integration. Two third-party dependency deprecation warnings are known and are not project test failures.
 
----
+### Completed phase history
 
-## 2. Project Status: Phase 5 — System Catalog, Schema, and Table Metadata
+| Phase | Delivered capability |
+| --- | --- |
+| 0 — Repository Foundation | Source layout, StrataEngine, backend adapter, and FastAPI health check. |
+| 1 — Core Storage | Fixed-size pages, PageId, and disk-backed page-file I/O. |
+| 2 — Record IDs and Slotted Pages | Stable RecordIds, slotted-page records, deletion, and compaction. |
+| 3 — Buffer Pool Manager | Bounded in-memory page cache, pin tracking, dirty write-back, and CLOCK replacement. |
+| 4 — Heap File | Multi-page, variable-length record storage over slotted pages. |
+| 5 — Schema, Tuple Serialization, Catalog, and Table | Typed relational rows, persistent metadata, and table operations. |
+| 6 — Query Execution | Volcano-style TableScan, Filter, and Projection operators. |
+| 7 — Query Planning | Immutable reusable plan trees that construct fresh Phase 6 operator trees. |
 
-**Strata is currently in Phase 5.**
+## Architecture
 
-Phase 5 introduces relational typing, schema validation, binary record serialization, relational table abstractions, and a persistent system catalog.
+The engine layers remain deliberately one-directional:
 
-### What is Implemented:
-- **`strata_engine.schema`**:
-  - `DataType`: Supported types (`INTEGER`, `BIGINT`, `FLOAT`, `BOOLEAN`, `VARCHAR`).
-  - `Column`: Immutable column definition with identifier validation (`^[A-Za-z_][A-Za-z0-9_]{0,63}$`), strict nullability, and VARCHAR max length rules.
-  - `Schema`: Immutable sequence of columns (1–256), case-preserving names, case-insensitive lookups, duplicate detection, and deterministic 32-bit CRC32 schema fingerprinting.
-  - `Tuple`: Immutable relational row container supporting ordinal and case-insensitive named access, strict equality contract, and unhashable semantics.
-  - `TupleSerializer`: Binary serializer with big-endian packing, null bitmap (LSB-first), UTF-8 text encoding, strict type checks, 4084-byte boundary enforcement, and corruption detection.
-  - Schema Exceptions: `SchemaError`, `InvalidColumnError`, `DuplicateColumnError`, `InvalidSchemaError`, `ColumnNotFoundError`, `InvalidTypeError`, `SerializationError`, `TupleArityError`, `TupleSizeError`, `TypeMismatchError`, `ValueOutOfRangeError`, `NullConstraintError`, `CorruptRecordError`, `SchemaMismatchError`.
-- **`strata_engine.catalog`**:
-  - `Table`: Relational table abstraction wrapping a `HeapFile` and `Schema` with typed `insert()`, `get()`, `delete()`, `scan()`, `count()`, and lifecycle management.
-  - `Catalog`: Persistent system catalog managing `<data_dir>/catalog/tables.db` and `<data_dir>/catalog/columns.db`, persistent monotonic High-Water Mark (HWM) table ID allocation without ID reuse, physical file-per-table mapping (`tables/table_{id}.db`), orphan file reconciliation, and DDL operations (`create_table`, `get_table`, `has_table`, `drop_table`, `list_tables`).
-  - Catalog Exceptions: `CatalogError`, `CatalogCorruptionError`, `TableNotFoundError`, `TableAlreadyExistsError`, `ReservedNameError`.
-- **`strata_engine`**:
-  - `StrataEngine`: Full database lifecycle management (`open()`, `close()`, context manager), table management delegators, and status reporting.
-- **`strata_engine.storage`**:
-  - Unchanged Phase 1–4 storage primitives: `Page`, `PageId`, `PageFile`, `RecordId`, `SlottedPage`, `ClockReplacer`, `BufferPoolManager`, `HeapFile`.
-- **`strata_backend`**: FastAPI application providing `GET /health` with `EngineAdapter`.
-- **Automated Tests**: 236 unit and integration tests across storage, heap files, schemas, serialization, table operations, catalog persistence, and health endpoints.
+~~~text
+Planning
+    ↓
+Execution
+    ↓
+Schema / Catalog
+    ↓
+Storage
+~~~
 
-### What is Intentionally NOT Implemented in Phase 5:
-- No SQL lexer, parser, or AST generation (Planned: Phase 6)
-- No query execution engine or Volcano iterators (Planned: Phase 7)
-- No B+ tree secondary indexing (Planned: Phase 8)
-- No transactions, WAL logging, or crash recovery (Planned: Phase 9)
-- No query optimizer or EXPLAIN plans
-- No overflow / chained large object pages (> 4084 bytes)
-- No user authentication or workspace domain backend
-- No frontend client
+Planning may depend on execution; execution must not depend on planning. The backend communicates with the public engine API through EngineAdapter and does not manipulate storage internals.
 
----
+## Phase 5: relational schema, serialization, catalog, and tables
 
-## 3. Technology Stack
+Phase 5 turns opaque heap-file records into typed relational data.
 
-- **Language**: Python (`>=3.10`, tested on Python 3.12)
-- **API Framework**: FastAPI (`>=0.110.0`)
-- **ASGI Web Server**: Uvicorn (`>=0.28.0`)
-- **Testing**: pytest (`>=8.0.0`), HTTPX (`>=0.27.0` for in-process TestClient)
-- **Build System**: setuptools (`pyproject.toml`)
+- **DataType** supports INTEGER, BIGINT, FLOAT, BOOLEAN, and VARCHAR.
+- **Column** provides immutable definitions with identifier validation, nullability, and VARCHAR length rules.
+- **Schema** supports 1–256 columns, preserves column names, resolves names case-insensitively, rejects case-insensitive duplicates, and computes a deterministic fingerprint.
+- **Tuple and TupleSerializer** provide immutable schema-bound rows; strict runtime type validation; a null bitmap; big-endian binary serialization; UTF-8 VARCHAR; schema-fingerprint checking; a maximum serialized tuple size of 4084 bytes; and corruption or schema-mismatch detection.
+- **Catalog and Table** persist metadata in catalog/tables.db and catalog/columns.db, store each table in its own file, allocate monotonic high-water-mark table IDs without reuse, reconcile orphan table files, and provide create_table, get_table, has_table, drop_table, and list_tables.
+- **Table** offers typed insert, get, delete, scan, and count operations with explicit lifecycle management.
 
-*No external database engines (SQLite, PostgreSQL, MySQL, MongoDB, SQLAlchemy, Redis) or ORMs are used. All database engine components will be implemented from scratch.*
+## Phase 6: query execution
 
----
+The execution package implements a streaming Volcano-style pipeline:
 
-## 4. Repository Structure
+~~~text
+Table
+  ↓
+TableScan
+  ↓
+Filter
+  ↓
+Projection
+~~~
 
-```
+Operator instances follow an explicit lifecycle:
+
+~~~text
+UNINITIALIZED
+  → open() → ACTIVE
+  → EOF → EXHAUSTED
+  → close() → CLOSED
+~~~
+
+- Calling next() before open() or after close() is invalid.
+- EOF returns None repeatedly.
+- close() is idempotent; failures clean up while preserving the original exception.
+- Iterator use opens and closes an operator only when it owns that lifecycle.
+- Projection owns its child (such as Filter); Filter owns its child (such as TableScan); TableScan borrows its Table. Closing operators never closes the underlying Table.
+
+### Predicates and projection
+
+- ComparisonPredicate supports =, ==, !=, <>, <, <=, >, and >=; == normalizes to =.
+- Ordinary comparisons against NULL do not match. IsNullPredicate supplies explicit IS NULL and IS NOT NULL behavior.
+- Projection accepts 1–256 columns, resolves names case-insensitively, rejects duplicate names, preserves the requested order, and emits fresh output Tuple objects.
+
+Phase 6 deliberately does not implement joins, aggregates, sorting, GROUP BY, DISTINCT, LIMIT/OFFSET, SQL parsing, optimization, indexes, mutation operators, or transactions.
+
+## Phase 7: query planning
+
+The planning package converts already-resolved query intent into reusable descriptions of Phase 6 execution trees:
+
+~~~text
+Resolved query intent
+  ↓
+QueryRequest
+  ↓
+Planner
+  ↓
+Plan tree
+  ↓
+Phase 6 operator tree
+  ↓
+Table
+  ↓
+Storage
+~~~
+
+Plans describe execution but do not execute it. They expose schema, are structurally immutable after construction, and each create_operator() call produces a fresh unopened operator tree.
+
+- **TableScanPlan** wraps a resolved Table, exposes exactly table.schema, borrows the table, and creates a fresh TableScan.
+- **FilterPlan** wraps a child Plan and an existing Phase 6 Predicate. It validates the predicate during construction, preserves child-schema identity, and creates a Filter around a fresh child operator tree.
+- **ProjectionPlan** wraps a child plan and 1–256 projected columns. It validates case-insensitive resolution, duplicate and missing columns during construction; preserves requested order; creates a new output Schema that reuses existing Column definitions; and creates a Projection around a fresh child operator tree.
+- **QueryRequest** holds a resolved Table, optional existing Predicate, and optional projection. It is immutable, normalizes projection sequences to tuples, distinguishes None (no projection) from an explicitly empty projection, and rejects the latter when planned.
+- **Planner** is deterministic, side-effect-free, and non-optimizing. It constructs exactly these shapes:
+
+~~~text
+TableScanPlan
+
+FilterPlan
+  └── TableScanPlan
+
+ProjectionPlan
+  └── TableScanPlan
+
+ProjectionPlan
+  └── FilterPlan
+        └── TableScanPlan
+~~~
+
+The public planning API is Plan, TableScanPlan, FilterPlan, ProjectionPlan, QueryRequest, Planner, and PlanningError.
+
+## Repository structure
+
+~~~text
 Strata/
-|
 ├── src/
 │   ├── strata_engine/
-│   │   ├── __init__.py         # Package root exporting StrataEngine
-│   │   └── engine.py           # Core engine class and status interface
-│   │
+│   │   ├── __init__.py
+│   │   ├── engine.py
+│   │   ├── storage/            # Pages, slotted pages, buffer pool, heap files
+│   │   ├── schema/             # Types, columns, schemas, tuples, serialization
+│   │   ├── catalog/            # Persistent catalog metadata and Table
+│   │   ├── execution/
+│   │   │   ├── operator.py
+│   │   │   ├── table_scan.py
+│   │   │   ├── filter.py
+│   │   │   ├── projection.py
+│   │   │   └── predicate.py
+│   │   └── planning/
+│   │       ├── plan.py
+│   │       ├── table_scan_plan.py
+│   │       ├── filter_plan.py
+│   │       ├── projection_plan.py
+│   │       ├── query_request.py
+│   │       └── planner.py
 │   └── strata_backend/
-│       ├── __init__.py         # Package root exporting EngineAdapter
-│       ├── main.py             # FastAPI entrypoint and GET /health route
-│       └── engine_adapter.py   # In-process adapter bridging backend and engine
-│
-├── tests/
-│   ├── __init__.py             # Test package marker
-│   ├── test_engine.py          # Unit tests for StrataEngine
-│   └── test_health.py          # Integration tests for GET /health endpoint
-│
-├── docs/
-│   ├── architecture.md         # Architecture boundaries & component roadmap
-│   └── development.md          # Local developer setup & workflow guide
-│
-├── data/
-│   └── .gitkeep                # Reserved directory for future runtime database files
-│
-├── pyproject.toml              # Project metadata, dependencies, and packaging
-├── README.md                   # Project overview and setup instructions
-├── .gitignore                  # Git ignore rules for Python, caches, and DB files
-└── .env.example                # Safe template for environment configuration
-```
+│       ├── main.py             # FastAPI entry point and GET /health
+│       └── engine_adapter.py   # Backend-to-engine boundary
+├── tests/                      # Storage through planning and integration tests
+├── docs/                       # Architecture, development, and storage notes
+├── data/                       # Reserved runtime data directory
+└── pyproject.toml
+~~~
 
----
+## Quick start
 
-## 5. Quick Start & Developer Guide
+Strata requires Python 3.10 or newer.
 
-### 5.1 Check Python Version
-Ensure Python 3.10+ is installed:
-```bash
+~~~bash
 python --version
-```
-
-### 5.2 Create and Activate Virtual Environment
-```powershell
-# Create virtual environment
 python -m venv .venv
+~~~
 
-# Activate on Windows (PowerShell)
+Activate the virtual environment:
+
+~~~powershell
+# Windows PowerShell
 .\.venv\Scripts\Activate.ps1
+~~~
 
-# Activate on Linux / macOS
+~~~bash
+# Linux / macOS
 source .venv/bin/activate
-```
+~~~
 
-### 5.3 Install Dependencies in Editable Mode
-```bash
-python -m pip install --upgrade pip
+Install the package and development dependencies:
+
+~~~bash
 python -m pip install -e ".[dev]"
-```
+~~~
 
-### 5.4 Run Automated Tests
-```bash
-python -m pytest -v
-```
+Run the automated suite:
 
-### 5.5 Start the Development Server
-```bash
+~~~bash
+python -m pytest
+~~~
+
+Start the development server:
+
+~~~bash
 python -m uvicorn strata_backend.main:app --reload --host 127.0.0.1 --port 8000
-```
+~~~
 
-### 5.6 Access the Health Endpoint
-Verify backend-to-engine communication by sending a GET request to `/health`:
-```bash
+Verify the backend/engine boundary:
+
+~~~bash
 curl http://127.0.0.1:8000/health
-```
+~~~
 
-**Response:**
-```json
+~~~json
 {
   "status": "ok",
   "service": "strata_backend",
@@ -151,23 +220,21 @@ curl http://127.0.0.1:8000/health
     "data_dir": null
   }
 }
-```
+~~~
 
-### What the Health Endpoint Proves:
-1. The FastAPI web framework starts and processes HTTP requests correctly.
-2. The `strata_backend` package successfully imports and instantiates the `EngineAdapter`.
-3. The `EngineAdapter` communicates with `StrataEngine` in-process.
-4. `StrataEngine` initializes and deterministically reports its status.
-5. The full communication path `Client -> FastAPI -> Adapter -> Engine -> Response` is verified and functioning.
+## Not yet implemented
 
----
+The engine and application are intentionally incomplete. The following are not implemented:
 
-## 6. Next Planned Phase: Phase 5 — System Catalog & Schema Management
+- SQL lexer, parser, or AST
+- query optimizer, cost model, or statistics
+- joins, aggregates, GROUP BY, ORDER BY, DISTINCT, LIMIT/OFFSET, or subqueries
+- secondary indexes
+- mutation planning or execution
+- transactions, concurrency control, WAL, or recovery
+- authentication or workspace/task domain backend features
+- frontend client
 
-With Phase 4 verified, the planned next phase will focus on:
-- System catalog tables for relational metadata storage (table schemas, column definitions, data types).
-- Table schema definitions and data type system (INTEGER, VARCHAR, BOOLEAN).
-- Tuple serialization and deserialization converting relational rows to/from opaque HeapFile records.
-- Named table lookup and metadata persistence.
+## Future work
 
-
+Future work is deliberately unnumbered until its sequencing is established. Likely areas include SQL parsing, richer execution (joins, aggregation, ordering, and limits), query optimization, indexes, mutation support, transactions and recovery, backend domain features, and a frontend client.
