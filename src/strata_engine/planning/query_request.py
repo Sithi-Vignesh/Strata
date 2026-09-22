@@ -6,6 +6,7 @@ from typing import Sequence
 from strata_engine.catalog import Table
 from strata_engine.execution import Predicate
 from strata_engine.planning.order_by import OrderBy
+from strata_engine.planning.aggregate import AggregateSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +19,7 @@ class QueryRequest:
     order_by: tuple[OrderBy, ...] | None = None
     limit: int | None = None
     offset: int = 0
+    aggregates: tuple[AggregateSpec, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.table, Table):
@@ -51,6 +53,22 @@ class QueryRequest:
         _validate_count("offset", self.offset)
         if self.limit is None and self.offset != 0:
             raise ValueError("offset requires a non-None limit.")
+        if self.aggregates is not None:
+            if not isinstance(self.aggregates, Sequence) or isinstance(self.aggregates, (str, bytes)):
+                raise TypeError(
+                    "Expected sequence of AggregateSpec objects or None for aggregates, "
+                    f"got {type(self.aggregates).__name__}."
+                )
+            aggregates = tuple(self.aggregates)
+            if not aggregates:
+                raise ValueError("aggregates must not be empty.")
+            if not all(isinstance(item, AggregateSpec) for item in aggregates):
+                raise TypeError("Aggregate items must all be AggregateSpec instances.")
+            if self.projection is not None:
+                raise ValueError("Aggregate requests cannot also contain a named projection.")
+            if self.order_by is not None:
+                raise ValueError("ORDER BY is not supported for aggregate requests.")
+            object.__setattr__(self, "aggregates", aggregates)
 
 
 def _validate_count(name: str, value: int) -> None:

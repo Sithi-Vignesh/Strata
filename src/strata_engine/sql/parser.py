@@ -4,6 +4,8 @@ from collections.abc import Sequence
 
 from strata_engine.sql.ast import (
     AndExpression,
+    AggregateCall,
+    AggregateList,
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
@@ -27,6 +29,7 @@ _COMPARISON_OPERATORS: dict[TokenType, str] = {
     TokenType.GREATER_EQUAL: ">=",
 }
 _LITERALS = {TokenType.INTEGER, TokenType.FLOAT, TokenType.STRING, TokenType.TRUE, TokenType.FALSE}
+_AGGREGATE_FUNCTIONS = {"COUNT", "SUM", "AVG", "MIN", "MAX"}
 
 
 class Parser:
@@ -78,14 +81,35 @@ class Parser:
             offset=offset,
         )
 
-    def _projection(self) -> SelectAll | ColumnList:
+    def _projection(self) -> SelectAll | ColumnList | AggregateList:
         if self._match(TokenType.STAR):
             return SelectAll()
-
-        columns = [self._consume(TokenType.IDENTIFIER, "projection column").lexeme]
+        items = [self._select_item()]
         while self._match(TokenType.COMMA):
-            columns.append(self._consume(TokenType.IDENTIFIER, "projection column").lexeme)
-        return ColumnList(tuple(columns))
+            items.append(self._select_item())
+        if all(isinstance(item, str) for item in items):
+            return ColumnList(tuple(items))  # type: ignore[arg-type]
+        if all(isinstance(item, AggregateCall) for item in items):
+            return AggregateList(tuple(items))  # type: ignore[arg-type]
+        token = self._peek()
+        raise SQLParseError(
+            f"Cannot mix ordinary projection columns and aggregate calls at position {token.position}."
+        )
+
+    def _select_item(self) -> str | AggregateCall:
+        name = self._consume(TokenType.IDENTIFIER, "projection column or aggregate function").lexeme
+        if not self._match(TokenType.LEFT_PAREN):
+            return name
+        if name.upper() not in _AGGREGATE_FUNCTIONS:
+            raise SQLParseError(f"Unsupported aggregate function '{name}'.")
+        if self._match(TokenType.STAR):
+            if name.upper() != "COUNT":
+                raise SQLParseError(f"Only COUNT accepts '*' at position {self._peek().position}.")
+            self._consume(TokenType.RIGHT_PAREN, "')' after COUNT(*)")
+            return AggregateCall(name, None)
+        argument = self._consume(TokenType.IDENTIFIER, "aggregate source column").lexeme
+        self._consume(TokenType.RIGHT_PAREN, "')' after aggregate argument")
+        return AggregateCall(name, argument)
 
     def _predicate(self) -> SQLPredicate:
         return self._or_expression()

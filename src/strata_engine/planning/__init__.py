@@ -1,6 +1,8 @@
 """Query planning abstractions for turning resolved intent into operator trees."""
 
 from strata_engine.planning.exceptions import PlanningError
+from strata_engine.planning.aggregate import AggregateSpec
+from strata_engine.planning.aggregate_plan import AggregatePlan
 from strata_engine.planning.filter_plan import FilterPlan
 from strata_engine.planning.limit_plan import LimitPlan
 from strata_engine.planning.order_by import OrderBy
@@ -13,6 +15,8 @@ from strata_engine.planning.table_scan_plan import TableScanPlan
 
 __all__ = [
     "PlanningError",
+    "AggregateSpec",
+    "AggregatePlan",
     "Plan",
     "TableScanPlan",
     "FilterPlan",

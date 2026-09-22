@@ -25,6 +25,28 @@ class ColumnList:
         object.__setattr__(self, "columns", tuple(self.columns))
 
 
+@dataclass(frozen=True, slots=True)
+class AggregateCall:
+    """An unresolved global aggregate call; ``None`` argument denotes ``COUNT(*)``."""
+
+    function_name: str
+    argument_name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AggregateList:
+    """An ordered aggregate-only SELECT list."""
+
+    aggregates: tuple[AggregateCall, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.aggregates, Sequence) or isinstance(self.aggregates, (str, bytes)):
+            raise TypeError("Expected sequence of AggregateCall objects.")
+        if not self.aggregates or not all(isinstance(item, AggregateCall) for item in self.aggregates):
+            raise TypeError("AggregateList requires one or more AggregateCall objects.")
+        object.__setattr__(self, "aggregates", tuple(self.aggregates))
+
+
 class SQLPredicate:
     """Marker base class for supported WHERE predicate forms."""
 
@@ -84,7 +106,7 @@ class SelectStatement:
     """One unresolved single-table SELECT statement."""
 
     table_name: str
-    projection: SelectAll | ColumnList
+    projection: SelectAll | ColumnList | AggregateList
     where: SQLPredicate | None
     order_by: tuple[OrderByItem, ...] | None = None
     limit: int | None = None

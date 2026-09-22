@@ -1,6 +1,7 @@
 """Deterministic construction of plans from resolved query requests."""
 
 from strata_engine.planning.filter_plan import FilterPlan
+from strata_engine.planning.aggregate_plan import AggregatePlan
 from strata_engine.planning.limit_plan import LimitPlan
 from strata_engine.planning.plan import Plan
 from strata_engine.planning.projection_plan import ProjectionPlan
@@ -20,6 +21,11 @@ class Planner:
         plan: Plan = TableScanPlan(request.table)
         if request.predicate is not None:
             plan = FilterPlan(plan, request.predicate)
+        if request.aggregates is not None:
+            plan = AggregatePlan(plan, request.aggregates)
+            if request.limit is not None:
+                plan = LimitPlan(plan, request.limit, request.offset)
+            return plan
         if request.order_by is not None:
             plan = SortPlan(plan, request.order_by)
         if request.projection is not None:

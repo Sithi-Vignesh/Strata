@@ -8,6 +8,7 @@ from strata_engine.execution.exceptions import (
     OperatorClosedError,
 )
 from strata_engine.execution.filter import Filter
+from strata_engine.execution.aggregate import Aggregate
 from strata_engine.execution.limit import Limit
 from strata_engine.execution.operator import Operator
 from strata_engine.execution.predicate import (
@@ -34,6 +35,7 @@ __all__ = [
     "OrPredicate",
     "NotPredicate",
     "Filter",
+    "Aggregate",
     "Projection",
     "Sort",
     "Limit",

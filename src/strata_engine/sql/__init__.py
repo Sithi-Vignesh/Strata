@@ -2,6 +2,8 @@
 
 from strata_engine.sql.ast import (
     AndExpression,
+    AggregateCall,
+    AggregateList,
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
@@ -28,6 +30,8 @@ __all__ = [
     "Lexer",
     "SelectAll",
     "ColumnList",
+    "AggregateCall",
+    "AggregateList",
     "SQLPredicate",
     "ComparisonExpression",
     "IsNullExpression",

@@ -10,8 +10,10 @@ from strata_engine.execution import (
     Predicate,
 )
 from strata_engine.planning import OrderBy, QueryRequest
+from strata_engine.planning import AggregateSpec
 from strata_engine.sql.ast import (
     AndExpression,
+    AggregateList,
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
@@ -41,10 +43,21 @@ class Binder:
         table = self._catalog.get_table(statement.table_name)
         if isinstance(statement.projection, SelectAll):
             projection: tuple[str, ...] | None = None
+            aggregates = None
         elif isinstance(statement.projection, ColumnList):
             projection = statement.projection.columns
+            aggregates = None
+        elif isinstance(statement.projection, AggregateList):
+            projection = None
+            aggregates = tuple(
+                AggregateSpec(item.function_name, item.argument_name)
+                for item in statement.projection.aggregates
+            )
         else:
             raise SQLBindingError("Unsupported SQL projection node.")
+
+        if aggregates is not None and statement.order_by is not None:
+            raise SQLBindingError("ORDER BY is not supported for aggregate queries.")
 
         predicate = self._bind_predicate(statement.where) if statement.where is not None else None
         order_by = (
@@ -60,6 +73,7 @@ class Binder:
             order_by=order_by,
             limit=statement.limit,
             offset=statement.offset,
+            aggregates=aggregates,
         )
 
     def _bind_predicate(self, predicate: SQLPredicate) -> Predicate:

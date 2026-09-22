@@ -16,6 +16,8 @@ from strata_engine.catalog import (
 from strata_engine.engine import StrataEngine
 from strata_engine.exceptions import StrataError
 from strata_engine.planning import (
+    AggregatePlan,
+    AggregateSpec,
     FilterPlan,
     LimitPlan,
     OrderBy,
@@ -28,6 +30,7 @@ from strata_engine.planning import (
     SortPlan,
 )
 from strata_engine.execution import (
+    Aggregate,
     AndPredicate,
     ComparisonPredicate,
     ExecutionError,
@@ -109,6 +112,8 @@ __all__ = [
     "StrataError",
     # Planning
     "PlanningError",
+    "AggregateSpec",
+    "AggregatePlan",
     "Plan",
     "TableScanPlan",
     "FilterPlan",
@@ -189,6 +194,7 @@ __all__ = [
     "OrPredicate",
     "NotPredicate",
     "Filter",
+    "Aggregate",
     "Projection",
     "Sort",
     "Limit",
