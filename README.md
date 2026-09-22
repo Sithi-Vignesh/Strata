@@ -6,9 +6,9 @@ Strata is a CSE302L / BCSE302P Database Systems project built bottom-up: first t
 
 ## Status
 
-**Phase 7 — Query Planning is complete.** Phase 0 through Phase 7 are implemented and verified. The Phase 7 planning layer has 22 targeted passing tests.
+**Phase 8 — Minimal SQL SELECT Frontend + Binding is implemented.** It adds a deliberately narrow SQL lexer, parser, unresolved immutable AST, and Binder over the existing planning and execution layers.
 
-The current suite has **291 passing tests** across storage, buffer pooling, heap files, schema and serialization, catalog and tables, query execution, query planning, and engine/backend integration. Two third-party dependency deprecation warnings are known and are not project test failures.
+Before Phase 8, the suite had **291 passing tests** across storage, buffer pooling, heap files, schema and serialization, catalog and tables, query execution, query planning, and engine/backend integration. Two third-party dependency deprecation warnings are known and are not project test failures.
 
 ### Completed phase history
 
@@ -22,6 +22,7 @@ The current suite has **291 passing tests** across storage, buffer pooling, heap
 | 5 — Schema, Tuple Serialization, Catalog, and Table | Typed relational rows, persistent metadata, and table operations. |
 | 6 — Query Execution | Volcano-style TableScan, Filter, and Projection operators. |
 | 7 — Query Planning | Immutable reusable plan trees that construct fresh Phase 6 operator trees. |
+| 8 — Minimal SQL SELECT Frontend + Binding | A single-table read-only SQL frontend that binds to existing QueryRequest, Planner, and operators. |
 
 ## Architecture
 
@@ -131,6 +132,22 @@ ProjectionPlan
 
 The public planning API is Plan, TableScanPlan, FilterPlan, ProjectionPlan, QueryRequest, Planner, and PlanningError.
 
+## Phase 8: minimal SQL SELECT frontend
+
+Phase 8 adds a narrow, dependency-downward frontend:
+
+~~~text
+SQL text
+  ↓
+Lexer → Parser → unresolved SQL AST → Binder
+  ↓
+QueryRequest → existing Planner → existing execution operators
+~~~
+
+The supported grammar is a single-table `SELECT` statement with either `*` or a comma-separated column list, an optional `WHERE` comparison against an integer, float, single-quoted string, or Boolean literal, and `IS NULL` / `IS NOT NULL`. Keywords and catalog/schema resolution are case-insensitive while identifier spelling is preserved. One optional trailing semicolon is allowed.
+
+The frontend intentionally does not provide joins, aliases, qualified names, boolean combinations, expressions, aggregates, ordering, limits, mutations, SQL comments, multiple statements, or `StrataEngine.execute()` integration. Binding resolves only the table and translates SQL syntax to existing `QueryRequest` and predicate types; existing plans and predicates remain authoritative for column, duplicate-projection, and literal-type validation.
+
 ## Repository structure
 
 ~~~text
@@ -226,7 +243,6 @@ curl http://127.0.0.1:8000/health
 
 The engine and application are intentionally incomplete. The following are not implemented:
 
-- SQL lexer, parser, or AST
 - query optimizer, cost model, or statistics
 - joins, aggregates, GROUP BY, ORDER BY, DISTINCT, LIMIT/OFFSET, or subqueries
 - secondary indexes

@@ -35,6 +35,15 @@ from strata_engine.execution import (
     Projection,
     TableScan,
 )
+from strata_engine.sql import (
+    Binder,
+    Lexer,
+    Parser,
+    SQLBindingError,
+    SQLError,
+    SQLLexError,
+    SQLParseError,
+)
 from strata_engine.schema import (
     Column,
     ColumnNotFoundError,
@@ -167,4 +176,12 @@ __all__ = [
     "IsNullPredicate",
     "Filter",
     "Projection",
+    # SQL frontend
+    "Lexer",
+    "Parser",
+    "Binder",
+    "SQLError",
+    "SQLLexError",
+    "SQLParseError",
+    "SQLBindingError",
 ]
