@@ -381,3 +381,28 @@ Run the full storage, schema, and catalog test suite:
 ```powershell
 python -m pytest -v
 ```
+
+---
+
+## 12. Persistent B+ Tree Core (Phase 19)
+
+`BPlusTree` is a dedicated storage primitive backed by its own `PageFile` and
+`BufferPoolManager`; it never shares heap pages or a table buffer pool. Page 0
+contains a versioned binary header. Pages 1 onward are dedicated B+ tree leaf
+or internal pages.
+
+- Supported key domains: `INTEGER`, `BIGINT`, `BOOLEAN`, and `VARCHAR`.
+- A leaf stores sorted `(key, RecordId)` entries and a next-leaf PageId.
+- Internal separators use the complete `(key, RecordId)` ordering and identify
+  the first entry in their right child, which keeps duplicate keys correct
+  across leaf boundaries.
+- Exact duplicate pairs are set-like no-ops; duplicate keys with different
+  RecordIds are retained.
+- `search(key)` returns RecordIds in deterministic RecordId order;
+  `scan_range(...)` returns ordered `(key, RecordId)` entries using leaf links.
+- Header metadata persists the root, height, entry count, leaf count, and tree
+  page count. Lookup/range operations expose deterministic page/entry metrics.
+
+Phase 19 deliberately excludes Catalog metadata, SQL `CREATE INDEX`, automatic
+Table maintenance, `IndexScan`, FLOAT and NULL keys, deletion/rebalancing, and
+transactions or recovery.

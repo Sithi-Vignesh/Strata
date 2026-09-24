@@ -63,3 +63,26 @@ class PageNotCachedError(StorageError):
 class InvalidPinCountError(StorageError):
     """Raised when an invalid pin count operation occurs (such as unpinning an unpinned page)."""
 
+
+class BPlusTreeError(StorageError):
+    """Base exception for persistent B+ tree storage failures."""
+
+
+class UnsupportedKeyTypeError(BPlusTreeError):
+    """Raised when a B+ tree is configured with an unsupported key type."""
+
+
+class KeyTypeMismatchError(BPlusTreeError):
+    """Raised when an opened tree does not match an expected key type."""
+
+
+class InvalidKeyError(BPlusTreeError):
+    """Raised when a key is null, has the wrong runtime type, or is out of range."""
+
+
+class KeyTooLargeError(BPlusTreeError):
+    """Raised when one encoded key cannot be represented in a B+ tree node."""
+
+
+class BPlusTreeCorruptionError(StorageCorruptionError):
+    """Raised when a persistent B+ tree header or node is malformed."""

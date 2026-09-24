@@ -7,20 +7,27 @@ slotted pages, and record identifiers for record-oriented storage.
 from strata_engine.storage.buffer_pool import BufferPoolManager, Frame
 from strata_engine.storage.exceptions import (
     BufferPoolFullError,
+    BPlusTreeCorruptionError,
+    BPlusTreeError,
     InsufficientSpaceError,
     InvalidPageIdError,
     InvalidPinCountError,
+    InvalidKeyError,
     InvalidSlotIdError,
     PageNotCachedError,
     PageNotFoundError,
     PageSizeError,
+    KeyTooLargeError,
+    KeyTypeMismatchError,
     RecordNotFoundError,
     RecordSizeError,
     SlottedPageCorruptionError,
     StorageClosedError,
     StorageCorruptionError,
     StorageError,
+    UnsupportedKeyTypeError,
 )
+from strata_engine.storage.b_plus_tree import BPlusTree, TraversalStats
 from strata_engine.storage.heap_file import HeapFile
 from strata_engine.storage.page import PAGE_SIZE, Page
 from strata_engine.storage.page_file import PageFile
@@ -42,6 +49,8 @@ __all__ = [
     "Replacer",
     "ClockReplacer",
     "HeapFile",
+    "BPlusTree",
+    "TraversalStats",
 
     "StorageError",
     "PageSizeError",
@@ -57,5 +66,10 @@ __all__ = [
     "BufferPoolFullError",
     "PageNotCachedError",
     "InvalidPinCountError",
+    "BPlusTreeError",
+    "BPlusTreeCorruptionError",
+    "UnsupportedKeyTypeError",
+    "KeyTypeMismatchError",
+    "InvalidKeyError",
+    "KeyTooLargeError",
 ]
-

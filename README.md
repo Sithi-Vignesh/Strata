@@ -6,7 +6,7 @@ Strata is built bottom-up—storage first, then relational data, query execution
 
 ## Status
 
-**Phase 18 — Minimal SQL DROP TABLE is implemented.** `StrataEngine.execute()` supports the existing SELECT pipeline, constrained `INSERT INTO table VALUES (...)` commands, and minimal `CREATE TABLE` and `DROP TABLE` commands.
+**Phase 19 — Persistent B+ tree core is implemented.** The storage layer now provides a durable, page-backed `BPlusTree` for INTEGER, BIGINT, BOOLEAN, and VARCHAR keys mapped to `RecordId` values. It is not yet attached to Catalog, Table, SQL, or query planning.
 
 Phase 13’s authoritative baseline was **472 passed**, **2 known third-party deprecation warnings**, and **0 failures**. Run the repository test suite to verify the current Phase 14 working tree.
 
@@ -33,6 +33,7 @@ Phase 13’s authoritative baseline was **472 passed**, **2 known third-party de
 | 16 — Minimal SQL INSERT | One ordered literal VALUES row inserted through the existing typed table path. |
 | 17 — Minimal SQL CREATE TABLE | Persistent table creation through the existing schema and catalog path. |
 | 18 — Minimal SQL DROP TABLE | Persistent table deletion through the existing catalog path. |
+| 19 — Persistent B+ Tree Core | Dedicated persistent B+ tree files with typed keys, duplicate RecordId entries, splits, leaf links, range scans, and deterministic traversal metrics. |
 
 ## Current architecture
 
@@ -181,6 +182,7 @@ python -m uvicorn strata_backend.main:app --reload --host 127.0.0.1 --port 8000
 - aliases, DISTINCT, DISTINCT aggregates, subqueries, and broader expression support;
 - multiple/chained joins, outer joins, and non-equality join conditions;
 - secondary indexes;
+- Catalog-backed indexes, SQL CREATE/DROP INDEX, and index scan planning;
 - SQL mutation planning and execution;
 - transactions, concurrency control, write-ahead logging, or recovery;
 - application-domain backend features and a frontend client.
