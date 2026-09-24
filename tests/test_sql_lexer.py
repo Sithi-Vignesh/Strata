@@ -78,6 +78,20 @@ def test_lexer_recognizes_create_table_and_type_keywords_without_changing_numeri
     assert tokens[24].literal == 1.0
 
 
+def test_lexer_recognizes_drop_keyword_case_insensitively_without_matching_prefixes() -> None:
+    tokens = Lexer("dRoP TABLE Users drop_table dropdown").tokenize()
+    assert [token.type for token in tokens] == [
+        TokenType.DROP,
+        TokenType.TABLE,
+        TokenType.IDENTIFIER,
+        TokenType.IDENTIFIER,
+        TokenType.IDENTIFIER,
+        TokenType.EOF,
+    ]
+    assert tokens[2].lexeme == "Users"
+    assert [token.lexeme for token in tokens[3:5]] == ["drop_table", "dropdown"]
+
+
 def test_lexer_recognizes_punctuation_and_all_comparison_spellings() -> None:
     tokens = Lexer("*,; = == != <> < <= > >=").tokenize()
     assert [token.type for token in tokens] == [

@@ -31,6 +31,7 @@ class TokenType(Enum):
     INTO = auto()
     VALUES = auto()
     CREATE = auto()
+    DROP = auto()
     TABLE = auto()
     TYPE_INTEGER = auto()
     TYPE_BIGINT = auto()

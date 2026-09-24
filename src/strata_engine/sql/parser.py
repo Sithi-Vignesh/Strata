@@ -21,6 +21,7 @@ from strata_engine.sql.ast import (
     InsertStatement,
     ColumnDefinition,
     CreateTableStatement,
+    DropTableStatement,
     Statement,
 )
 from strata_engine.sql.exceptions import SQLParseError
@@ -61,8 +62,10 @@ class Parser:
             statement = self._insert_statement()
         elif self._peek().type == TokenType.CREATE:
             statement = self._create_table_statement()
+        elif self._peek().type == TokenType.DROP:
+            statement = self._drop_table_statement()
         else:
-            self._raise_expected("SELECT, INSERT, or CREATE")
+            self._raise_expected("SELECT, INSERT, CREATE, or DROP")
 
         self._match(TokenType.SEMICOLON)
         self._consume(TokenType.EOF, "end of statement")
@@ -145,6 +148,13 @@ class Parser:
             columns.append(self._column_definition())
         self._consume(TokenType.RIGHT_PAREN, "')' after column definitions")
         return CreateTableStatement(table_name, tuple(columns))
+
+    def _drop_table_statement(self) -> DropTableStatement:
+        """Parse one minimal DROP TABLE statement without its terminator."""
+        self._consume(TokenType.DROP, "DROP")
+        self._consume(TokenType.TABLE, "TABLE after DROP")
+        table_name = self._consume(TokenType.IDENTIFIER, "table identifier").lexeme
+        return DropTableStatement(table_name)
 
     def _column_definition(self) -> ColumnDefinition:
         name = self._consume(TokenType.IDENTIFIER, "column identifier").lexeme

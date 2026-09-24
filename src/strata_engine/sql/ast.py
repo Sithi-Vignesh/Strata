@@ -192,4 +192,15 @@ class CreateTableStatement:
         object.__setattr__(self, "columns", columns)
 
 
-Statement = SelectStatement | InsertStatement | CreateTableStatement
+@dataclass(frozen=True, slots=True)
+class DropTableStatement:
+    """One unresolved minimal DROP TABLE statement."""
+
+    table_name: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table_name, str):
+            raise TypeError(f"table_name must be a str, got {type(self.table_name).__name__}.")
+
+
+Statement = SelectStatement | InsertStatement | CreateTableStatement | DropTableStatement

@@ -6,7 +6,7 @@ Strata is built bottom-up—storage first, then relational data, query execution
 
 ## Status
 
-**Phase 17 — Minimal SQL CREATE TABLE is implemented.** `StrataEngine.execute()` supports the existing SELECT pipeline, constrained `INSERT INTO table VALUES (...)` commands, and minimal `CREATE TABLE` commands.
+**Phase 18 — Minimal SQL DROP TABLE is implemented.** `StrataEngine.execute()` supports the existing SELECT pipeline, constrained `INSERT INTO table VALUES (...)` commands, and minimal `CREATE TABLE` and `DROP TABLE` commands.
 
 Phase 13’s authoritative baseline was **472 passed**, **2 known third-party deprecation warnings**, and **0 failures**. Run the repository test suite to verify the current Phase 14 working tree.
 
@@ -32,6 +32,7 @@ Phase 13’s authoritative baseline was **472 passed**, **2 known third-party de
 | 15 — Engine SQL Integration | Public `StrataEngine.execute()` facade that materializes existing SELECT results as `QueryResult`. |
 | 16 — Minimal SQL INSERT | One ordered literal VALUES row inserted through the existing typed table path. |
 | 17 — Minimal SQL CREATE TABLE | Persistent table creation through the existing schema and catalog path. |
+| 18 — Minimal SQL DROP TABLE | Persistent table deletion through the existing catalog path. |
 
 ## Current architecture
 
@@ -109,7 +110,7 @@ with StrataEngine("database") as engine:
         print(row.values)
 ```
 
-`execute()` supports the existing SELECT subset, constrained INSERT, and the minimal CREATE TABLE form below.
+`execute()` supports the existing SELECT subset, constrained INSERT, and the minimal CREATE TABLE and DROP TABLE forms below.
 
 The first supported SQL mutation is a deliberately constrained INSERT:
 
@@ -127,7 +128,7 @@ created = engine.execute("CREATE TABLE users (id INTEGER, name VARCHAR(100))")
 assert created.affected_rows == 0
 ```
 
-All SQL-created columns are currently non-nullable. `NULL`/`NOT NULL`, `PRIMARY KEY`, `UNIQUE`, `DEFAULT`, `CHECK`, `FOREIGN KEY`, `IF NOT EXISTS`, `CREATE TABLE AS SELECT`, `DROP`, `ALTER`, and DDL transactions/recovery are unsupported. CREATE, INSERT, and SELECT can form a basic SQL-only workflow.
+All SQL-created columns are currently non-nullable. Minimal `DROP TABLE table_name` is supported and returns `CommandResult(affected_rows=0)`. `NULL`/`NOT NULL`, `PRIMARY KEY`, `UNIQUE`, `DEFAULT`, `CHECK`, `FOREIGN KEY`, `IF EXISTS`, `CREATE TABLE AS SELECT`, `ALTER`, `CASCADE`, `RESTRICT`, and DDL transactions/recovery are unsupported. CREATE, INSERT, DROP, and SELECT can form a basic SQL-only workflow.
 
 ## Repository structure
 

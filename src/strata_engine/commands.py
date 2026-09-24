@@ -32,3 +32,14 @@ class CreateTableCommand:
             raise TypeError(f"Expected table name str, got {type(self.table_name).__name__}.")
         if not isinstance(self.schema, Schema):
             raise TypeError(f"Expected Schema instance, got {type(self.schema).__name__}.")
+
+
+@dataclass(frozen=True, slots=True)
+class DropTableCommand:
+    """Resolved DROP TABLE target, ready for engine dispatch."""
+
+    table_name: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table_name, str):
+            raise TypeError(f"Expected table name str, got {type(self.table_name).__name__}.")

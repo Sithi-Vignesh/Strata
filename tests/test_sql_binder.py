@@ -1,11 +1,13 @@
 """Binding and validation-boundary tests for the Phase 8 SQL frontend."""
 
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
 
 from strata_engine.catalog import Catalog, Table, TableNotFoundError
-from strata_engine.commands import CreateTableCommand, InsertCommand
+
+from strata_engine.commands import CreateTableCommand, DropTableCommand, InsertCommand
 from strata_engine.execution import (
     AndPredicate,
     ComparisonPredicate,
@@ -24,7 +26,14 @@ from strata_engine.schema import (
     TypeMismatchError,
 )
 from strata_engine.sql import Binder, Lexer, Parser, SQLBindingError
-from strata_engine.sql.ast import CreateTableStatement, InsertStatement, SQLPredicate, SelectAll, SelectStatement
+from strata_engine.sql.ast import (
+    CreateTableStatement,
+    DropTableStatement,
+    InsertStatement,
+    SQLPredicate,
+    SelectAll,
+    SelectStatement,
+)
 from strata_engine.storage import StorageClosedError
 
 
@@ -79,6 +88,16 @@ def test_binder_resolves_create_table_to_real_schema(catalog) -> None:
         ("active", DataType.BOOLEAN, False, None),
         ("name", DataType.VARCHAR, False, 100),
     ]
+
+
+def test_binder_translates_drop_table_without_resolving_the_target(catalog) -> None:
+    cat, _ = catalog
+    command = Binder(cat).bind(DropTableStatement("MissingTable"))
+    assert isinstance(command, DropTableCommand)
+    assert command.table_name == "MissingTable"
+    assert command.__slots__ == ("table_name",)
+    with pytest.raises(FrozenInstanceError):
+        command.table_name = "other"  # type: ignore[misc]
 
 
 @pytest.mark.parametrize(

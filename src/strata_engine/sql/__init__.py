@@ -19,6 +19,7 @@ from strata_engine.sql.ast import (
     InsertStatement,
     ColumnDefinition,
     CreateTableStatement,
+    DropTableStatement,
     Statement,
 )
 from strata_engine.sql.binder import Binder
@@ -53,6 +54,7 @@ __all__ = [
     "InsertStatement",
     "ColumnDefinition",
     "CreateTableStatement",
+    "DropTableStatement",
     "Statement",
     "Parser",
     "Binder",

@@ -344,3 +344,30 @@ def test_engine_execute_create_table_preserves_catalog_schema_and_lifecycle_erro
         ]
         assert engine.execute("INSERT INTO USERS VALUES (1, 'Ada')") == CommandResult(1)
         assert [row.values for row in engine.execute("SELECT Id, Name FROM users").rows] == [(1, "Ada")]
+
+
+# ============================================================================
+# Phase 18: Minimal SQL DROP TABLE
+# ============================================================================
+
+
+def test_engine_execute_drop_table_uses_catalog_lifecycle_and_persists(tmp_path: Path) -> None:
+    from strata_engine.catalog import TableNotFoundError
+
+    database = tmp_path / "database"
+    with StrataEngine(database) as engine:
+        engine.execute("CREATE TABLE Users (id INTEGER, name VARCHAR(100))")
+        assert engine.execute("INSERT INTO users VALUES (1, 'Ada')") == CommandResult(1)
+        table_file = database / "tables" / "table_1.db"
+        assert table_file.exists()
+
+        assert engine.execute("drop table users;") == CommandResult(0)
+        assert engine.has_table("Users") is False
+        assert not table_file.exists()
+        with pytest.raises(TableNotFoundError):
+            engine.get_table("users")
+        with pytest.raises(TableNotFoundError):
+            engine.execute("DROP TABLE users")
+
+    with StrataEngine(database) as reopened:
+        assert reopened.has_table("users") is False

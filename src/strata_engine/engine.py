@@ -9,7 +9,7 @@ from typing import Any, List, Optional, Union
 
 from strata_engine.catalog.catalog import Catalog
 from strata_engine.catalog.table import Table
-from strata_engine.commands import CreateTableCommand, InsertCommand
+from strata_engine.commands import CreateTableCommand, DropTableCommand, InsertCommand
 from strata_engine.planning import Planner
 from strata_engine.planning import QueryRequest
 from strata_engine.result import CommandResult, QueryResult
@@ -177,6 +177,9 @@ class StrataEngine:
             return CommandResult(affected_rows=1)
         if isinstance(bound, CreateTableCommand):
             self.create_table(bound.table_name, bound.schema)
+            return CommandResult(affected_rows=0)
+        if isinstance(bound, DropTableCommand):
+            self.drop_table(bound.table_name)
             return CommandResult(affected_rows=0)
         raise TypeError(f"Unsupported bound statement type {type(bound).__name__}.")
 

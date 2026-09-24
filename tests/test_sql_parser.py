@@ -10,6 +10,7 @@ from strata_engine.sql import (
     ComparisonExpression,
     CreateTableStatement,
     ColumnDefinition,
+    DropTableStatement,
     IsNullExpression,
     InsertStatement,
     Lexer,
@@ -58,6 +59,27 @@ def test_parser_create_table_builds_ordered_syntax_only_columns() -> None:
         ),
     )
     assert parse("CREATE TABLE users (id INTEGER)").columns == (ColumnDefinition("id", "INTEGER"),)
+
+
+@pytest.mark.parametrize(
+    ("sql", "name"),
+    [
+        ("DROP TABLE users", "users"),
+        ("DROP TABLE users;", "users"),
+        ("drop table users;", "users"),
+        ("DROP TABLE Users", "Users"),
+    ],
+)
+def test_parser_drop_table_builds_unresolved_statement(sql: str, name: str) -> None:
+    assert parse(sql) == DropTableStatement(name)
+
+
+def test_drop_table_statement_is_immutable_and_syntax_only() -> None:
+    statement = parse("DROP TABLE Users")
+    assert statement.table_name == "Users"
+    assert statement.__slots__ == ("table_name",)
+    with pytest.raises((AttributeError, FrozenInstanceError, TypeError)):
+        statement.table_name = "other"  # type: ignore[misc]
 
 
 def test_parser_column_list_comparison_and_scalar_values() -> None:
@@ -139,6 +161,25 @@ def test_parser_rejects_unsupported_insert_forms(sql: str) -> None:
     ],
 )
 def test_parser_rejects_unsupported_create_table_forms(sql: str) -> None:
+    with pytest.raises(SQLParseError):
+        parse(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DROP",
+        "DROP users",
+        "DROP TABLE",
+        "DROP TABLE ;",
+        "DROP TABLE users extra",
+        "DROP TABLE users, orders",
+        "DROP TABLE IF EXISTS users",
+        "DROP TABLE users CASCADE",
+        "DROP TABLE users RESTRICT",
+    ],
+)
+def test_parser_rejects_unsupported_drop_table_forms(sql: str) -> None:
     with pytest.raises(SQLParseError):
         parse(sql)
 
