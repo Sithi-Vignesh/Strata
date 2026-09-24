@@ -9,8 +9,10 @@ from typing import Any, List, Optional, Union
 
 from strata_engine.catalog.catalog import Catalog
 from strata_engine.catalog.table import Table
+from strata_engine.commands import InsertCommand
 from strata_engine.planning import Planner
-from strata_engine.result import QueryResult
+from strata_engine.planning import QueryRequest
+from strata_engine.result import CommandResult, QueryResult
 from strata_engine.schema.schema import Schema
 from strata_engine.sql import Binder, Lexer, Parser
 from strata_engine.storage.exceptions import StorageClosedError
@@ -155,20 +157,25 @@ class StrataEngine:
             "data_dir": str(self._data_dir) if self._data_dir else None,
         }
 
-    def execute(self, sql: str) -> QueryResult:
-        """Execute one supported SELECT statement and materialize its result.
+    def execute(self, sql: str) -> QueryResult | CommandResult:
+        """Execute one supported SELECT statement or constrained INSERT command.
 
         The engine owns the complete operator lifecycle; returned rows remain
         usable after their operator has closed.
         """
         statement = Parser(Lexer(sql).tokenize()).parse()
-        request = Binder(self.catalog).bind(statement)
-        plan = Planner().plan(request)
-        operator = plan.create_operator()
-        schema = operator.schema
-        with operator:
-            rows = tuple(operator)
-        return QueryResult(schema=schema, rows=rows)
+        bound = Binder(self.catalog).bind(statement)
+        if isinstance(bound, QueryRequest):
+            plan = Planner().plan(bound)
+            operator = plan.create_operator()
+            schema = operator.schema
+            with operator:
+                rows = tuple(operator)
+            return QueryResult(schema=schema, rows=rows)
+        if isinstance(bound, InsertCommand):
+            bound.table.insert(bound.values)
+            return CommandResult(affected_rows=1)
+        raise TypeError(f"Unsupported bound statement type {type(bound).__name__}.")
 
     def __enter__(self) -> "StrataEngine":
         return self.open()

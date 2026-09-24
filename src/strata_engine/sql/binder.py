@@ -1,6 +1,7 @@
 """Binding from unresolved SQL syntax to existing Strata query requests."""
 
 from strata_engine.catalog import Catalog
+from strata_engine.commands import InsertCommand
 from strata_engine.execution import (
     AndPredicate,
     ComparisonPredicate,
@@ -28,6 +29,8 @@ from strata_engine.sql.ast import (
     SQLPredicate,
     SelectAll,
     SelectStatement,
+    InsertStatement,
+    Statement,
 )
 from strata_engine.sql.exceptions import SQLBindingError
 
@@ -40,10 +43,12 @@ class Binder:
             raise TypeError(f"Expected Catalog instance, got {type(catalog).__name__}.")
         self._catalog = catalog
 
-    def bind(self, statement: SelectStatement) -> QueryRequest:
+    def bind(self, statement: Statement) -> QueryRequest | InsertCommand:
         """Resolve one statement without planning, scanning, or closing borrowed resources."""
+        if isinstance(statement, InsertStatement):
+            return InsertCommand(self._catalog.get_table(statement.table_name), statement.values)
         if not isinstance(statement, SelectStatement):
-            raise TypeError(f"Expected SelectStatement instance, got {type(statement).__name__}.")
+            raise TypeError(f"Expected SelectStatement or InsertStatement instance, got {type(statement).__name__}.")
 
         table = self._catalog.get_table(statement.table_name)
         if statement.join is not None:

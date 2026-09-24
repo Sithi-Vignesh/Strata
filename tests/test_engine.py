@@ -9,7 +9,7 @@ Validates the public engine facade:
 
 from pathlib import Path
 import pytest
-from strata_engine import Column, DataType, QueryResult, Schema, StrataEngine, Tuple
+from strata_engine import CommandResult, Column, DataType, QueryResult, Schema, StrataEngine, Tuple
 
 
 def test_engine_import() -> None:
@@ -254,3 +254,52 @@ def test_engine_execute_propagates_existing_errors_and_query_result_is_immutable
     with pytest.raises(FrozenInstanceError):
         result.rows = ()  # type: ignore[misc]
     assert result.rows[0].values == ("Ada",)
+
+
+# ============================================================================
+# Phase 16: Minimal Single-Row SQL INSERT
+# ============================================================================
+
+
+def test_engine_execute_insert_returns_command_result_and_select_remains_query_result(sql_engine: StrataEngine) -> None:
+    inserted = sql_engine.execute("INSERT INTO users VALUES (4, 'Dia', NULL)")
+    assert isinstance(inserted, CommandResult)
+    assert inserted.affected_rows == 1
+
+    selected = sql_engine.execute("SELECT name, country FROM users WHERE id = 4")
+    assert isinstance(selected, QueryResult)
+    assert selected.schema.column_names == ("name", "country")
+    assert [row.values for row in selected.rows] == [("Dia", None)]
+
+
+def test_engine_execute_insert_preserves_existing_serializer_validation(sql_engine: StrataEngine) -> None:
+    from strata_engine.schema import NullConstraintError, TupleArityError, TypeMismatchError
+
+    with pytest.raises(TupleArityError):
+        sql_engine.execute("INSERT INTO users VALUES (4, 'Dia')")
+    with pytest.raises(TypeMismatchError):
+        sql_engine.execute("INSERT INTO users VALUES ('four', 'Dia', 'IN')")
+    with pytest.raises(NullConstraintError):
+        sql_engine.execute("INSERT INTO users VALUES (4, NULL, 'IN')")
+
+
+def test_engine_execute_insert_float_strictness_persistence_and_command_result_immutability(tmp_path: Path) -> None:
+    from dataclasses import FrozenInstanceError
+    from strata_engine.schema import TypeMismatchError
+
+    database = tmp_path / "database"
+    with StrataEngine(database) as engine:
+        engine.create_table(
+            "measurements",
+            Schema([Column("id", DataType.INTEGER), Column("value", DataType.FLOAT)]),
+        )
+        assert engine.execute("INSERT INTO measurements VALUES (1, 1.0)") == CommandResult(1)
+        with pytest.raises(TypeMismatchError):
+            engine.execute("INSERT INTO measurements VALUES (2, 1)")
+        result = engine.execute("INSERT INTO measurements VALUES (3, -2.5)")
+        with pytest.raises(FrozenInstanceError):
+            result.affected_rows = 0  # type: ignore[misc]
+
+    with StrataEngine(database) as engine:
+        result = engine.execute("SELECT id, value FROM measurements ORDER BY id")
+        assert [row.values for row in result.rows] == [(1, 1.0), (3, -2.5)]

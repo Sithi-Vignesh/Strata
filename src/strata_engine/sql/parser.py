@@ -18,6 +18,8 @@ from strata_engine.sql.ast import (
     SQLPredicate,
     SelectAll,
     SelectStatement,
+    InsertStatement,
+    Statement,
 )
 from strata_engine.sql.exceptions import SQLParseError
 from strata_engine.sql.token import Token, TokenType
@@ -32,11 +34,12 @@ _COMPARISON_OPERATORS: dict[TokenType, str] = {
     TokenType.GREATER_EQUAL: ">=",
 }
 _LITERALS = {TokenType.INTEGER, TokenType.FLOAT, TokenType.STRING, TokenType.TRUE, TokenType.FALSE}
+_INSERT_LITERALS = _LITERALS | {TokenType.NULL}
 _AGGREGATE_FUNCTIONS = {"COUNT", "SUM", "AVG", "MIN", "MAX"}
 
 
 class Parser:
-    """Parse a token sequence into exactly one unresolved SelectStatement."""
+    """Parse a token sequence into exactly one unresolved SQL statement."""
 
     def __init__(self, tokens: Sequence[Token]) -> None:
         if not isinstance(tokens, Sequence) or isinstance(tokens, (str, bytes)):
@@ -48,8 +51,23 @@ class Parser:
             raise SQLParseError("Token sequence must terminate with EOF.")
         self._current = 0
 
-    def parse(self) -> SelectStatement:
-        """Parse one SELECT statement followed by EOF."""
+    def parse(self) -> Statement:
+        """Parse one supported statement followed by EOF."""
+        if self._peek().type == TokenType.SELECT:
+            statement = self._select_statement()
+        elif self._peek().type == TokenType.INSERT:
+            statement = self._insert_statement()
+        else:
+            self._raise_expected("SELECT or INSERT")
+
+        self._match(TokenType.SEMICOLON)
+        self._consume(TokenType.EOF, "end of statement")
+        if self._current != len(self._tokens):
+            self._raise_expected("end of token stream")
+        return statement
+
+    def _select_statement(self) -> SelectStatement:
+        """Parse one SELECT statement without consuming its terminator."""
         self._consume(TokenType.SELECT, "SELECT")
         projection = self._projection()
         self._consume(TokenType.FROM, "FROM")
@@ -88,10 +106,6 @@ class Parser:
             if self._match(TokenType.OFFSET):
                 offset = self._consume_non_negative_integer("OFFSET value")
 
-        self._match(TokenType.SEMICOLON)
-        self._consume(TokenType.EOF, "end of statement")
-        if self._current != len(self._tokens):
-            self._raise_expected("end of token stream")
         return SelectStatement(
             table_name=table_name,
             projection=projection,
@@ -102,6 +116,19 @@ class Parser:
             join=join,
             group_by=group_by,
         )
+
+    def _insert_statement(self) -> InsertStatement:
+        """Parse one constrained single-row INSERT statement."""
+        self._consume(TokenType.INSERT, "INSERT")
+        self._consume(TokenType.INTO, "INTO after INSERT")
+        table_name = self._consume(TokenType.IDENTIFIER, "table identifier").lexeme
+        self._consume(TokenType.VALUES, "VALUES after table identifier")
+        self._consume(TokenType.LEFT_PAREN, "'(' before INSERT values")
+        values = [self._consume_insert_literal()]
+        while self._match(TokenType.COMMA):
+            values.append(self._consume_insert_literal())
+        self._consume(TokenType.RIGHT_PAREN, "')' after INSERT values")
+        return InsertStatement(table_name, tuple(values))
 
     def _projection(self) -> SelectAll | ColumnList | AggregateList | GroupedAggregateList:
         if self._match(TokenType.STAR):
@@ -223,6 +250,13 @@ class Parser:
         token = self._peek()
         if token.type not in _LITERALS:
             self._raise_expected("integer, float, string, TRUE, or FALSE literal")
+        self._advance()
+        return token.literal
+
+    def _consume_insert_literal(self) -> object | None:
+        token = self._peek()
+        if token.type not in _INSERT_LITERALS:
+            self._raise_expected("integer, float, string, TRUE, FALSE, or NULL literal")
         self._advance()
         return token.literal
 

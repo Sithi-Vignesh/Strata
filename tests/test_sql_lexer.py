@@ -27,6 +27,22 @@ def test_lexer_keywords_preserve_identifier_spelling_and_literals() -> None:
     assert tokens[-1].position == len("sElEcT Name FROM Users WHERE active = TRUE")
 
 
+def test_lexer_recognizes_insert_keywords_case_insensitively() -> None:
+    tokens = Lexer("iNsErT InTo users VaLuEs (1, NULL)").tokenize()
+    assert [token.type for token in tokens] == [
+        TokenType.INSERT,
+        TokenType.INTO,
+        TokenType.IDENTIFIER,
+        TokenType.VALUES,
+        TokenType.LEFT_PAREN,
+        TokenType.INTEGER,
+        TokenType.COMMA,
+        TokenType.NULL,
+        TokenType.RIGHT_PAREN,
+        TokenType.EOF,
+    ]
+
+
 def test_lexer_recognizes_punctuation_and_all_comparison_spellings() -> None:
     tokens = Lexer("*,; = == != <> < <= > >=").tokenize()
     assert [token.type for token in tokens] == [

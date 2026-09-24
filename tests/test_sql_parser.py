@@ -9,6 +9,7 @@ from strata_engine.sql import (
     ColumnList,
     ComparisonExpression,
     IsNullExpression,
+    InsertStatement,
     Lexer,
     NotExpression,
     OrderByItem,
@@ -28,6 +29,12 @@ def test_parser_select_all_with_optional_semicolon_and_preserved_identifier() ->
     assert statement.table_name == "Users"
     assert isinstance(statement.projection, SelectAll)
     assert statement.where is None
+
+
+def test_parser_insert_values_literals_and_optional_semicolon() -> None:
+    statement = parse("INSERT INTO users VALUES (1, -2.5, 'O''Brien', TRUE, NULL);")
+    assert statement == InsertStatement("users", (1, -2.5, "O'Brien", True, None))
+    assert parse("insert into users values (1)") == InsertStatement("users", (1,))
 
 
 def test_parser_column_list_comparison_and_scalar_values() -> None:
@@ -74,6 +81,20 @@ def test_parser_where_forms(sql: str, expected: object) -> None:
     ],
 )
 def test_parser_rejects_syntax_outside_the_locked_grammar(sql: str) -> None:
+    with pytest.raises(SQLParseError):
+        parse(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "INSERT INTO users VALUES ()",
+        "INSERT INTO users VALUES (1,)",
+        "INSERT INTO users VALUES (1), (2)",
+        "INSERT INTO users (id) VALUES (1)",
+    ],
+)
+def test_parser_rejects_unsupported_insert_forms(sql: str) -> None:
     with pytest.raises(SQLParseError):
         parse(sql)
 

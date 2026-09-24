@@ -22,3 +22,14 @@ class QueryResult:
                 raise TypeError(f"QueryResult rows must be Tuple instances, got {type(row).__name__}.")
             if row.schema != self.schema:
                 raise ValueError("QueryResult row schema must match the result schema.")
+
+
+@dataclass(frozen=True, slots=True)
+class CommandResult:
+    """Immutable metadata returned by a successfully executed SQL command."""
+
+    affected_rows: int
+
+    def __post_init__(self) -> None:
+        if type(self.affected_rows) is not int or self.affected_rows < 0:
+            raise ValueError("affected_rows must be a non-negative int.")

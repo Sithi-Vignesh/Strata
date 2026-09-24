@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from strata_engine.catalog import Catalog, Table, TableNotFoundError
+from strata_engine.commands import InsertCommand
 from strata_engine.execution import (
     AndPredicate,
     ComparisonPredicate,
@@ -22,7 +23,7 @@ from strata_engine.schema import (
     TypeMismatchError,
 )
 from strata_engine.sql import Binder, Lexer, Parser, SQLBindingError
-from strata_engine.sql.ast import SQLPredicate, SelectAll, SelectStatement
+from strata_engine.sql.ast import InsertStatement, SQLPredicate, SelectAll, SelectStatement
 from strata_engine.storage import StorageClosedError
 
 
@@ -52,6 +53,17 @@ def test_binder_resolves_cached_table_and_translates_projection(catalog) -> None
     assert request.table is table is cat.get_table("USERS")
     assert request.projection == ("Name", "age")
     assert request.predicate is None
+
+
+def test_binder_resolves_insert_target_without_revalidating_values(catalog) -> None:
+    cat, table = catalog
+    command = Binder(cat).bind(InsertStatement("users", (1, "Ada", 20, None)))
+    assert isinstance(command, InsertCommand)
+    assert command.table is table
+    assert command.values == (1, "Ada", 20, None)
+
+    with pytest.raises(TableNotFoundError):
+        Binder(cat).bind(InsertStatement("missing", (1,)))
 
 
 def test_binder_translates_existing_predicate_types(catalog) -> None:

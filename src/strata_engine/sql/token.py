@@ -27,6 +27,9 @@ class TokenType(Enum):
     JOIN = auto()
     INNER = auto()
     ON = auto()
+    INSERT = auto()
+    INTO = auto()
+    VALUES = auto()
 
     IDENTIFIER = auto()
     INTEGER = auto()

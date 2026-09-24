@@ -143,3 +143,26 @@ class SelectStatement:
     offset: int = 0
     join: JoinClause | None = None
     group_by: tuple[QualifiedIdentifier, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InsertStatement:
+    """One unresolved single-row INSERT statement."""
+
+    table_name: str
+    values: tuple[object | None, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table_name, str):
+            raise TypeError(f"table_name must be a str, got {type(self.table_name).__name__}.")
+        if not isinstance(self.values, Sequence) or isinstance(self.values, (str, bytes)):
+            raise TypeError("Insert values must be a sequence of SQL literals.")
+        values = tuple(self.values)
+        if not values:
+            raise ValueError("Insert values must not be empty.")
+        if not all(value is None or type(value) in (int, float, str, bool) for value in values):
+            raise TypeError("Insert values must be SQL literal values.")
+        object.__setattr__(self, "values", values)
+
+
+Statement = SelectStatement | InsertStatement

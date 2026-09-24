@@ -25,6 +25,9 @@ _KEYWORDS: dict[str, TokenType] = {
     "JOIN": TokenType.JOIN,
     "INNER": TokenType.INNER,
     "ON": TokenType.ON,
+    "INSERT": TokenType.INSERT,
+    "INTO": TokenType.INTO,
+    "VALUES": TokenType.VALUES,
 }
 
 

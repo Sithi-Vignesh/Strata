@@ -6,7 +6,7 @@ Strata is built bottom-up—storage first, then relational data, query execution
 
 ## Status
 
-**Phase 15 — Engine SQL integration is implemented.** `StrataEngine.execute()` is the public facade for the existing SELECT pipeline and returns a fully materialized `QueryResult` containing its schema and schema-bound rows.
+**Phase 16 — Minimal single-row SQL INSERT is implemented.** `StrataEngine.execute()` supports the existing SELECT pipeline and constrained `INSERT INTO table VALUES (...)` commands.
 
 Phase 13’s authoritative baseline was **472 passed**, **2 known third-party deprecation warnings**, and **0 failures**. Run the repository test suite to verify the current Phase 14 working tree.
 
@@ -30,6 +30,7 @@ Phase 13’s authoritative baseline was **472 passed**, **2 known third-party de
 | 13 — GROUP BY / Grouped Aggregation | Single-table grouping with one or more columns, existing aggregates, mixed/interleaved output, post-aggregate ORDER BY, and LIMIT/OFFSET. |
 | 14 — Two-table INNER JOIN + Aggregation | Global and grouped aggregation over one equality INNER JOIN, including qualified/unique unqualified references and post-aggregate ordering. |
 | 15 — Engine SQL Integration | Public `StrataEngine.execute()` facade that materializes existing SELECT results as `QueryResult`. |
+| 16 — Minimal SQL INSERT | One ordered literal VALUES row inserted through the existing typed table path. |
 
 ## Current architecture
 
@@ -107,7 +108,16 @@ with StrataEngine("database") as engine:
         print(row.values)
 ```
 
-`execute()` currently supports only the existing SELECT subset; SQL DDL and DML are not yet supported.
+`execute()` supports the existing SELECT subset and the constrained INSERT form below; SQL DDL and other DML are not yet supported.
+
+The first supported SQL mutation is a deliberately constrained INSERT:
+
+```python
+inserted = engine.execute("INSERT INTO users VALUES (2, 'Bea')")
+assert inserted.affected_rows == 1
+```
+
+INSERT accepts exactly one literal row, requires all table columns in schema order, and returns `CommandResult(affected_rows=1)`. Column lists, multi-row VALUES, `INSERT ... SELECT`, and `RETURNING` are not supported. SQL DDL and other DML statements are still unavailable.
 
 ## Repository structure
 

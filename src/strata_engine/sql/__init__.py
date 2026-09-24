@@ -16,6 +16,8 @@ from strata_engine.sql.ast import (
     SQLPredicate,
     SelectAll,
     SelectStatement,
+    InsertStatement,
+    Statement,
 )
 from strata_engine.sql.binder import Binder
 from strata_engine.sql.exceptions import SQLError, SQLBindingError, SQLLexError, SQLParseError
@@ -46,6 +48,8 @@ __all__ = [
     "NotExpression",
     "OrderByItem",
     "SelectStatement",
+    "InsertStatement",
+    "Statement",
     "Parser",
     "Binder",
 ]
