@@ -6,6 +6,7 @@ from strata_engine.sql.ast import (
     AndExpression,
     AggregateCall,
     AggregateList,
+    GroupedAggregateList,
     QualifiedIdentifier,
     JoinClause,
     ColumnList,
@@ -64,6 +65,17 @@ class Parser:
         if self._match(TokenType.WHERE):
             where = self._predicate()
 
+        group_by: tuple[QualifiedIdentifier, ...] | None = None
+        if self._match(TokenType.GROUP):
+            self._consume(TokenType.BY, "BY after GROUP")
+            group_by = self._group_by()
+
+        if isinstance(projection, GroupedAggregateList) and group_by is None:
+            token = self._peek()
+            raise SQLParseError(
+                f"Cannot mix ordinary projection columns and aggregate calls without GROUP BY at position {token.position}."
+            )
+
         order_by: tuple[OrderByItem, ...] | None = None
         if self._match(TokenType.ORDER):
             self._consume(TokenType.BY, "BY after ORDER")
@@ -88,9 +100,10 @@ class Parser:
             limit=limit,
             offset=offset,
             join=join,
+            group_by=group_by,
         )
 
-    def _projection(self) -> SelectAll | ColumnList | AggregateList:
+    def _projection(self) -> SelectAll | ColumnList | AggregateList | GroupedAggregateList:
         if self._match(TokenType.STAR):
             return SelectAll()
         items = [self._select_item()]
@@ -100,10 +113,7 @@ class Parser:
             return ColumnList(tuple(items))  # type: ignore[arg-type]
         if all(isinstance(item, AggregateCall) for item in items):
             return AggregateList(tuple(items))  # type: ignore[arg-type]
-        token = self._peek()
-        raise SQLParseError(
-            f"Cannot mix ordinary projection columns and aggregate calls at position {token.position}."
-        )
+        return GroupedAggregateList(tuple(items))
 
     def _select_item(self) -> str | QualifiedIdentifier | AggregateCall:
         name = self._consume(TokenType.IDENTIFIER, "projection column or aggregate function").lexeme
@@ -143,6 +153,12 @@ class Parser:
         items = [self._order_item()]
         while self._match(TokenType.COMMA):
             items.append(self._order_item())
+        return tuple(items)
+
+    def _group_by(self) -> tuple[QualifiedIdentifier, ...]:
+        items = [self._column_ref()]
+        while self._match(TokenType.COMMA):
+            items.append(self._column_ref())
         return tuple(items)
 
     def _order_item(self) -> OrderByItem:

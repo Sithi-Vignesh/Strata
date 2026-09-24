@@ -28,6 +28,8 @@ Before Phase 8, the suite had **291 passing tests** across storage, buffer pooli
 | 11 — Global Aggregation | Blocking global `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`, with WHERE before aggregation and LIMIT after it. |
 | 12 — Two-table INNER JOIN | One equality INNER JOIN across two distinct tables, qualified references, joined WHERE/ORDER BY, and pagination. |
 
+| 13 - GROUP BY | Single-table grouped aggregation with mixed, ordered group/aggregate SELECT lists, post-aggregate ORDER BY, and LIMIT/OFFSET. |
+
 ## Architecture
 
 The engine layers remain deliberately one-directional:
@@ -150,7 +152,7 @@ QueryRequest → existing Planner → existing execution operators
 
 The supported grammar is a single-table `SELECT` statement with either `*` or a comma-separated column list, an optional `WHERE` comparison against an integer, float, single-quoted string, or Boolean literal, and `IS NULL` / `IS NOT NULL`. Keywords and catalog/schema resolution are case-insensitive while identifier spelling is preserved. One optional trailing semicolon is allowed.
 
-The frontend supports Boolean WHERE composition through `AND`, `OR`, prefix `NOT`, and parentheses for predicate grouping; precedence is `NOT > AND > OR`. It also supports `ORDER BY` simple source columns with ASC/DESC and multiple ordering items, plus `LIMIT` and `LIMIT ... OFFSET ...`. Strata sorts NULL values last for ASC and first for DESC. Global aggregate-only SELECT lists support `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`; WHERE runs before aggregation and LIMIT runs after it. Result schema names are valid generated identifiers such as `count_star` and `sum_age`; if a prefixed source name would exceed 64 characters, its source portion is deterministically truncated to fit. GROUP BY, HAVING, aliases, DISTINCT aggregates, aggregate-query ORDER BY, and mixing ordinary columns with global aggregate calls remain unsupported. It intentionally does not provide general scalar expressions, SQL comments, multiple statements, or `StrataEngine.execute()` integration. Binding resolves only the table and translates SQL syntax to existing `QueryRequest` and predicate types; existing plans and predicates remain authoritative for column, duplicate-projection, literal-type, and ordering-column validation.
+The frontend supports Boolean WHERE composition through `AND`, `OR`, prefix `NOT`, and parentheses for predicate grouping; precedence is `NOT > AND > OR`. It also supports `ORDER BY` simple source columns with ASC/DESC and multiple ordering items, plus `LIMIT` and `LIMIT ... OFFSET ...`. Strata sorts NULL values last for ASC and first for DESC. Global aggregate-only SELECT lists support `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`; WHERE runs before aggregation and LIMIT runs after it. Single-table GROUP BY supports mixed, SELECT-order-preserving grouping columns and aggregate calls; grouped ORDER BY resolves only exposed output names, then LIMIT/OFFSET applies. Every ordinary selected column must appear in GROUP BY, and GROUP BY without aggregates is unsupported. Result schema names are valid generated identifiers such as `count_star` and `sum_age`; if a prefixed source name would exceed 64 characters, its source portion is deterministically truncated to fit. HAVING, JOIN + aggregation, aliases, DISTINCT aggregates, aggregate-call ordering such as `ORDER BY COUNT(*)`, and global aggregate ORDER BY remain unsupported. It intentionally does not provide general scalar expressions, SQL comments, multiple statements, or `StrataEngine.execute()` integration. Binding resolves only the table and translates SQL syntax to existing `QueryRequest` and predicate types; existing plans and predicates remain authoritative for column, duplicate-projection, literal-type, and ordering-column validation.
 
 Two-table INNER equality joins are supported with `JOIN` or `INNER JOIN`, actual table-name qualification, explicit projections, joined WHERE conditions, ORDER BY, and LIMIT/OFFSET. For example:
 
@@ -260,7 +262,7 @@ curl http://127.0.0.1:8000/health
 The engine and application are intentionally incomplete. The following are not implemented:
 
 - query optimizer, cost model, or statistics
-- joins, GROUP BY, HAVING, DISTINCT aggregates, aliases, subqueries, or advanced aggregate ordering features
+- HAVING, JOIN + aggregation, DISTINCT aggregates, aliases, subqueries, or advanced aggregate ordering features
 - secondary indexes
 - mutation planning or execution
 - transactions, concurrency control, WAL, or recovery

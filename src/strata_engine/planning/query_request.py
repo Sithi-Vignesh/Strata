@@ -6,7 +6,7 @@ from typing import Sequence
 from strata_engine.catalog import Table
 from strata_engine.execution import Predicate
 from strata_engine.planning.order_by import OrderBy
-from strata_engine.planning.aggregate import AggregateSpec
+from strata_engine.planning.aggregate import AggregateOutputSpec, AggregateSpec
 from strata_engine.planning.column_ref import ColumnRef
 from strata_engine.planning.join import JoinOrderBy, JoinSpec
 
@@ -26,6 +26,8 @@ class QueryRequest:
     joined_where: object | None = None
     join_projection: tuple[ColumnRef, ...] | None = None
     join_order_by: tuple[JoinOrderBy, ...] | None = None
+    group_by: tuple[str, ...] | None = None
+    aggregate_output: tuple[AggregateOutputSpec, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.table, Table):
@@ -72,12 +74,32 @@ class QueryRequest:
                 raise TypeError("Aggregate items must all be AggregateSpec instances.")
             if self.projection is not None:
                 raise ValueError("Aggregate requests cannot also contain a named projection.")
-            if self.order_by is not None:
+            if self.order_by is not None and self.group_by is None:
                 raise ValueError("ORDER BY is not supported for aggregate requests.")
             object.__setattr__(self, "aggregates", aggregates)
+        if self.group_by is not None:
+            if not isinstance(self.group_by, Sequence) or isinstance(self.group_by, (str, bytes)):
+                raise TypeError("Expected sequence of grouping column names or None for group_by.")
+            group_by = tuple(self.group_by)
+            if not group_by or not all(isinstance(item, str) for item in group_by):
+                raise ValueError("group_by must contain one or more column names.")
+            if self.aggregates is None:
+                raise ValueError("GROUP BY requires aggregate specifications.")
+            object.__setattr__(self, "group_by", group_by)
+        if self.aggregate_output is not None:
+            if not isinstance(self.aggregate_output, Sequence) or isinstance(self.aggregate_output, (str, bytes)):
+                raise TypeError("Expected sequence of AggregateOutputSpec objects or None for aggregate_output.")
+            output = tuple(self.aggregate_output)
+            if not output or not all(isinstance(item, AggregateOutputSpec) for item in output):
+                raise ValueError("aggregate_output must contain AggregateOutputSpec values.")
+            if self.aggregates is None or self.group_by is None:
+                raise ValueError("aggregate_output requires grouped aggregate request fields.")
+            object.__setattr__(self, "aggregate_output", output)
+        elif self.group_by is not None:
+            raise ValueError("Grouped aggregate requests require aggregate_output.")
         if self.join is not None:
             if not isinstance(self.join, JoinSpec): raise TypeError("join must be a JoinSpec or None.")
-            if self.predicate is not None or self.projection is not None or self.order_by is not None or self.aggregates is not None:
+            if self.predicate is not None or self.projection is not None or self.order_by is not None or self.aggregates is not None or self.group_by is not None or self.aggregate_output is not None:
                 raise ValueError("Join requests must use join-specific WHERE, projection, ordering, and no aggregates.")
             if self.join_projection is None: raise ValueError("Join requests require explicit join_projection.")
             projection = tuple(self.join_projection)

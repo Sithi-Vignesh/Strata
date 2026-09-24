@@ -21,6 +21,7 @@ _KEYWORDS: dict[str, TokenType] = {
     "DESC": TokenType.DESC,
     "LIMIT": TokenType.LIMIT,
     "OFFSET": TokenType.OFFSET,
+    "GROUP": TokenType.GROUP,
     "JOIN": TokenType.JOIN,
     "INNER": TokenType.INNER,
     "ON": TokenType.ON,

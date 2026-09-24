@@ -52,6 +52,22 @@ class AggregateList:
         object.__setattr__(self, "aggregates", tuple(self.aggregates))
 
 
+@dataclass(frozen=True, slots=True)
+class GroupedAggregateList:
+    """An ordered mixed column/aggregate SELECT list, valid only with GROUP BY."""
+
+    items: tuple[str | QualifiedIdentifier | AggregateCall, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.items, Sequence) or isinstance(self.items, (str, bytes)):
+            raise TypeError("Expected sequence of grouped aggregate SELECT items.")
+        if not self.items or not all(isinstance(item, (str, QualifiedIdentifier, AggregateCall)) for item in self.items):
+            raise TypeError("Grouped aggregate SELECT items are invalid.")
+        if not any(isinstance(item, AggregateCall) for item in self.items):
+            raise ValueError("Grouped aggregate SELECT list requires an aggregate call.")
+        object.__setattr__(self, "items", tuple(self.items))
+
+
 class SQLPredicate:
     """Marker base class for supported WHERE predicate forms."""
 
@@ -120,9 +136,10 @@ class SelectStatement:
     """One unresolved single-table SELECT statement."""
 
     table_name: str
-    projection: SelectAll | ColumnList | AggregateList
+    projection: SelectAll | ColumnList | AggregateList | GroupedAggregateList
     where: SQLPredicate | None
     order_by: tuple[OrderByItem, ...] | None = None
     limit: int | None = None
     offset: int = 0
     join: JoinClause | None = None
+    group_by: tuple[QualifiedIdentifier, ...] | None = None

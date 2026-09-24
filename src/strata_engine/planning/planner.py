@@ -38,7 +38,9 @@ class Planner:
         if request.predicate is not None:
             plan = FilterPlan(plan, request.predicate)
         if request.aggregates is not None:
-            plan = AggregatePlan(plan, request.aggregates)
+            plan = AggregatePlan(plan, request.aggregates, request.group_by, request.aggregate_output)
+            if request.group_by is not None and request.order_by is not None:
+                plan = SortPlan(plan, request.order_by)
             if request.limit is not None:
                 plan = LimitPlan(plan, request.limit, request.offset)
             return plan

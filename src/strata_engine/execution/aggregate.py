@@ -33,16 +33,32 @@ class ResolvedAggregate:
             raise ValueError("Column aggregates require a source index and DataType.")
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedAggregateOutput:
+    """Execution-local reference to a grouping key or aggregate result."""
+
+    kind: str
+    index: int
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"GROUP", "AGGREGATE"}:
+            raise ValueError("Aggregate output kind must be GROUP or AGGREGATE.")
+        if type(self.index) is not int or self.index < 0:
+            raise ValueError("Aggregate output index must be a non-negative int.")
+
+
 class Aggregate(Operator):
     """Compute global aggregate values incrementally while opening an owned child."""
 
-    __slots__ = ("_child", "_aggregates", "_schema", "_result", "_is_open", "_exhausted")
+    __slots__ = ("_child", "_aggregates", "_group_indexes", "_output_layout", "_schema", "_results", "_position", "_is_open", "_exhausted")
 
     def __init__(
         self,
         child: Operator,
         aggregates: Sequence[ResolvedAggregate],
         schema: Schema,
+        group_indexes: Sequence[int] = (),
+        output_layout: Sequence[ResolvedAggregateOutput] | None = None,
     ) -> None:
         if not isinstance(child, Operator):
             raise TypeError(f"Expected Operator instance for child, got {type(child).__name__}.")
@@ -55,15 +71,28 @@ class Aggregate(Operator):
             raise TypeError("Aggregate specifications must all be ResolvedAggregate instances.")
         if not isinstance(schema, Schema):
             raise TypeError(f"Expected Schema instance, got {type(schema).__name__}.")
-        if len(schema) != len(resolved):
-            raise ValueError("Aggregate output schema must contain one column per aggregate.")
         if any(item.column_index is not None and item.column_index >= child.schema.column_count for item in resolved):
             raise ValueError("Aggregate source column index is outside the child schema.")
 
+        groups = tuple(group_indexes)
+        if not all(type(index) is int and 0 <= index < child.schema.column_count for index in groups):
+            raise ValueError("Aggregate grouping index is outside the child schema.")
+        layout = tuple(output_layout) if output_layout is not None else tuple(
+            ResolvedAggregateOutput("AGGREGATE", index) for index in range(len(resolved))
+        )
+        if not layout or not all(isinstance(item, ResolvedAggregateOutput) for item in layout):
+            raise TypeError("Aggregate output layout must contain ResolvedAggregateOutput values.")
+        if len(schema) != len(layout):
+            raise ValueError("Aggregate output schema must match its output layout.")
+        if any(item.kind == "GROUP" and item.index >= len(groups) for item in layout) or any(item.kind == "AGGREGATE" and item.index >= len(resolved) for item in layout):
+            raise ValueError("Aggregate output layout index is outside its source collection.")
         self._child = child
         self._aggregates = resolved
+        self._group_indexes = groups
+        self._output_layout = layout
         self._schema = schema
-        self._result: Tuple | None = None
+        self._results: list[Tuple] = []
+        self._position = 0
         self._is_open = False
         self._exhausted = False
 
@@ -77,6 +106,16 @@ class Aggregate(Operator):
         return self._aggregates
 
     @property
+    def group_indexes(self) -> tuple[int, ...]:
+        """Return physical child indexes forming each grouping key."""
+        return self._group_indexes
+
+    @property
+    def output_layout(self) -> tuple[ResolvedAggregateOutput, ...]:
+        """Return the resolved layout used to construct each output tuple."""
+        return self._output_layout
+
+    @property
     def schema(self) -> Schema:
         return self._schema
 
@@ -85,18 +124,28 @@ class Aggregate(Operator):
         return self._is_open
 
     def open(self) -> None:
-        """Open child, consume it, and publish one finalized aggregate tuple."""
-        self._result = None
+        """Open child, consume it, and publish finalized global or grouped tuples."""
+        self._results.clear()
+        self._position = 0
         self._is_open = False
         self._exhausted = False
         try:
-            states = [_new_state(item) for item in self._aggregates]
+            groups: dict[tuple[object, ...], list[dict[str, object]]] = {}
+            if not self._group_indexes:
+                groups[()] = [_new_state(item) for item in self._aggregates]
             self._child.open()
             while (row := self._child.next()) is not None:
+                key = tuple(row[index] for index in self._group_indexes)
+                states = groups.get(key)
+                if states is None:
+                    states = [_new_state(item) for item in self._aggregates]
+                    groups[key] = states
                 for item, state in zip(self._aggregates, states):
                     _update_state(item, state, row)
-            values = tuple(_finalize_state(item, state) for item, state in zip(self._aggregates, states))
-            self._result = Tuple(values, schema=self._schema)
+            for key, states in groups.items():
+                aggregate_values = tuple(_finalize_state(item, state) for item, state in zip(self._aggregates, states))
+                values = tuple(key[item.index] if item.kind == "GROUP" else aggregate_values[item.index] for item in self._output_layout)
+                self._results.append(Tuple(values, schema=self._schema))
             self._is_open = True
         except Exception:
             try:
@@ -110,11 +159,16 @@ class Aggregate(Operator):
             raise OperatorClosedError("Aggregate is not open. Call open() first.")
         if self._exhausted:
             return None
-        self._exhausted = True
-        return self._result
+        if self._position >= len(self._results):
+            self._exhausted = True
+            return None
+        result = self._results[self._position]
+        self._position += 1
+        return result
 
     def close(self) -> None:
-        self._result = None
+        self._results.clear()
+        self._position = 0
         self._is_open = False
         self._exhausted = False
         try:

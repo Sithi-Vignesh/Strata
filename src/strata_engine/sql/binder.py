@@ -10,12 +10,14 @@ from strata_engine.execution import (
     Predicate,
 )
 from strata_engine.planning import OrderBy, QueryRequest
-from strata_engine.planning import AggregateSpec
+from strata_engine.planning import AggregateOutputSpec, AggregateSpec
 from strata_engine.planning import ColumnRef, JoinCondition, JoinOrderBy, JoinSpec
 from strata_engine.planning.join import AndCondition, ColumnLiteralCondition, IsNullCondition, NotCondition, OrCondition
 from strata_engine.sql.ast import (
     AndExpression,
+    AggregateCall,
     AggregateList,
+    GroupedAggregateList,
     QualifiedIdentifier,
     ColumnList,
     ComparisonExpression,
@@ -45,7 +47,11 @@ class Binder:
 
         table = self._catalog.get_table(statement.table_name)
         if statement.join is not None:
+            if statement.group_by is not None:
+                raise SQLBindingError("GROUP BY is not supported for JOIN queries.")
             return self._bind_join(statement, table)
+        if statement.group_by is not None:
+            return self._bind_grouped(statement, table)
         if isinstance(statement.projection, SelectAll):
             projection: tuple[str, ...] | None = None
             aggregates = None
@@ -86,6 +92,47 @@ class Binder:
             offset=statement.offset,
             aggregates=aggregates,
         )
+
+    def _bind_grouped(self, statement: SelectStatement, table) -> QueryRequest:
+        if any(ref.qualifier is not None for ref in statement.group_by or ()):
+            raise SQLBindingError("Qualified GROUP BY references require a JOIN.")
+        group_by = tuple(ref.column_name for ref in statement.group_by or ())
+        seen: set[str] = set()
+        for name in group_by:
+            if name.lower() in seen:
+                raise SQLBindingError(f"Duplicate GROUP BY column '{name}' (matches case-insensitively).")
+            seen.add(name.lower())
+
+        if isinstance(statement.projection, AggregateList):
+            items: tuple[object, ...] = statement.projection.aggregates
+        elif isinstance(statement.projection, GroupedAggregateList):
+            items = statement.projection.items
+        else:
+            raise SQLBindingError("GROUP BY requires an aggregate SELECT list.")
+
+        aggregates: list[AggregateSpec] = []
+        output: list[AggregateOutputSpec] = []
+        for item in items:
+            if isinstance(item, AggregateCall):
+                output.append(AggregateOutputSpec("AGGREGATE", len(aggregates)))
+                aggregates.append(AggregateSpec(item.function_name, item.argument_name))
+            else:
+                if isinstance(item, QualifiedIdentifier):
+                    raise SQLBindingError("Qualified column references require a JOIN.")
+                assert isinstance(item, str)
+                if item.lower() not in seen:
+                    raise SQLBindingError(f"Selected column '{item}' must appear in GROUP BY.")
+                output.append(AggregateOutputSpec("GROUP", _group_index(group_by, item)))
+
+        if statement.order_by is not None and any(item.qualifier is not None for item in statement.order_by):
+            raise SQLBindingError("Qualified ORDER BY references require a JOIN.")
+        if statement.where is not None and _has_qualified_predicate(statement.where):
+            raise SQLBindingError("Qualified WHERE references require a JOIN.")
+        predicate = self._bind_predicate(statement.where) if statement.where is not None else None
+        order_by = tuple(OrderBy(item.column_name, item.descending) for item in statement.order_by) if statement.order_by is not None else None
+        return QueryRequest(table=table, predicate=predicate, order_by=order_by, limit=statement.limit,
+                            offset=statement.offset, aggregates=tuple(aggregates), group_by=group_by,
+                            aggregate_output=tuple(output))
 
     def _bind_join(self, statement: SelectStatement, table) -> QueryRequest:
         assert statement.join is not None
@@ -136,3 +183,7 @@ def _has_qualified_predicate(predicate: SQLPredicate) -> bool:
     if isinstance(predicate, (AndExpression, OrExpression)): return _has_qualified_predicate(predicate.left) or _has_qualified_predicate(predicate.right)
     if isinstance(predicate, NotExpression): return _has_qualified_predicate(predicate.child)
     return False
+
+
+def _group_index(group_by: tuple[str, ...], name: str) -> int:
+    return next(index for index, item in enumerate(group_by) if item.lower() == name.lower())

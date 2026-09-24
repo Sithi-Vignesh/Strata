@@ -1,7 +1,7 @@
 """Query planning abstractions for turning resolved intent into operator trees."""
 
 from strata_engine.planning.exceptions import AmbiguousColumnError, PlanningError
-from strata_engine.planning.aggregate import AggregateSpec
+from strata_engine.planning.aggregate import AggregateOutputSpec, AggregateSpec
 from strata_engine.planning.aggregate_plan import AggregatePlan
 from strata_engine.planning.column_ref import ColumnRef
 from strata_engine.planning.join import JoinCondition, JoinSpec, JoinOrderBy
@@ -20,6 +20,7 @@ from strata_engine.planning.table_scan_plan import TableScanPlan
 __all__ = [
     "PlanningError",
     "AggregateSpec",
+    "AggregateOutputSpec",
     "AggregatePlan",
     "ColumnRef",
     "JoinCondition",

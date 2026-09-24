@@ -23,6 +23,7 @@ class TokenType(Enum):
     DESC = auto()
     LIMIT = auto()
     OFFSET = auto()
+    GROUP = auto()
     JOIN = auto()
     INNER = auto()
     ON = auto()
