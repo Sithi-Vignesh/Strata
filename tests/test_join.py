@@ -41,8 +41,6 @@ def test_join_restrictions_and_ambiguity(catalog):
     with pytest.raises(SQLBindingError):
         _execute(catalog, "SELECT * FROM users JOIN orders ON users.id = orders.user_id")
     with pytest.raises(SQLBindingError):
-        _execute(catalog, "SELECT COUNT(*) FROM users JOIN orders ON users.id = orders.user_id")
-    with pytest.raises(SQLBindingError):
         _execute(catalog, "SELECT users.id FROM users JOIN users ON users.id = users.id")
     with pytest.raises(SQLParseError):
         Parser(Lexer("SELECT users.id FROM users JOIN orders ON users.id > orders.user_id").tokenize()).parse()
@@ -210,7 +208,7 @@ def test_projection_names_long_names_parser_rejections_and_api(catalog, tmp_path
     # JOIN ON accepts only column_ref = column_ref; literal operands fail in parsing.
     for sql in ("SELECT users. FROM users", "SELECT .users FROM users", "SELECT users..id FROM users", "SELECT users.id FROM users JOIN orders ON users.id > orders.user_id", "SELECT users.id FROM users JOIN orders ON 1 = orders.user_id", "SELECT users.id FROM users JOIN orders ON users.id = 1", "SELECT users.id FROM users JOIN orders ON users.id = orders.user_id JOIN users ON users.id = users.id"):
         with pytest.raises(SQLParseError): Parser(Lexer(sql).tokenize()).parse()
-    for sql in ("SELECT * FROM users JOIN orders ON users.id = orders.user_id", "SELECT COUNT(*) FROM users JOIN orders ON users.id = orders.user_id", "SELECT users.id FROM users JOIN users ON users.id = users.id", "SELECT users.id FROM users JOIN missing ON users.id = missing.id"):
+    for sql in ("SELECT * FROM users JOIN orders ON users.id = orders.user_id", "SELECT users.id FROM users JOIN users ON users.id = users.id", "SELECT users.id FROM users JOIN missing ON users.id = missing.id"):
         with pytest.raises((SQLBindingError, ColumnNotFoundError, TableNotFoundError)): Binder(catalog).bind(Parser(Lexer(sql).tokenize()).parse())
     request = QueryRequest(catalog.get_table("users"), None, ("name",), None, 1, 0)
     assert request.projection == ("name",) and request.join is request.joined_where is request.join_projection is request.join_order_by is None

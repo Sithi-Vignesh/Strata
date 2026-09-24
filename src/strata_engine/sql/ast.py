@@ -35,7 +35,7 @@ class AggregateCall:
     """An unresolved global aggregate call; ``None`` argument denotes ``COUNT(*)``."""
 
     function_name: str
-    argument_name: str | None = None
+    argument_name: str | QualifiedIdentifier | None = None
 
 
 @dataclass(frozen=True, slots=True)

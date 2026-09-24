@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from strata_engine.planning.column_ref import ColumnRef
+
 
 SUPPORTED_AGGREGATES = frozenset({"COUNT", "SUM", "AVG", "MIN", "MAX"})
 
@@ -11,7 +13,8 @@ class AggregateSpec:
     """One unresolved global aggregate request."""
 
     operation: str
-    column_name: str | None = None
+    column_name: str | ColumnRef | None = None
+    output_name: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.operation, str):
@@ -19,8 +22,10 @@ class AggregateSpec:
         operation = self.operation.upper()
         if operation not in SUPPORTED_AGGREGATES:
             raise ValueError(f"Unsupported aggregate operation '{self.operation}'.")
-        if self.column_name is not None and not isinstance(self.column_name, str):
-            raise TypeError("column_name must be a str or None.")
+        if self.column_name is not None and not isinstance(self.column_name, (str, ColumnRef)):
+            raise TypeError("column_name must be a str, ColumnRef, or None.")
+        if self.output_name is not None and not isinstance(self.output_name, str):
+            raise TypeError("output_name must be a str or None.")
         if operation == "COUNT":
             pass
         elif self.column_name is None:

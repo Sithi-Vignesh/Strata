@@ -14,7 +14,8 @@ class AggregatePlan(Plan):
     __slots__ = ("_child", "_aggregates", "_group_by", "_resolved", "_group_indexes", "_output_layout", "_schema")
 
     def __init__(self, child: Plan, aggregates: Sequence[AggregateSpec], group_by: Sequence[str] | None = None,
-                 output_layout: Sequence[AggregateOutputSpec] | None = None) -> None:
+                 output_layout: Sequence[AggregateOutputSpec] | None = None,
+                 group_output_names: Sequence[str] | None = None) -> None:
         if not isinstance(child, Plan):
             raise TypeError(f"Expected Plan instance for child, got {type(child).__name__}.")
         if not isinstance(aggregates, Sequence) or isinstance(aggregates, (str, bytes)):
@@ -32,6 +33,8 @@ class AggregatePlan(Plan):
             source = None
             source_index = None
             if spec.column_name is not None:
+                if not isinstance(spec.column_name, str):
+                    raise TypeError("AggregatePlan requires physical string column names.")
                 source_index = child.schema.column_index(spec.column_name)
                 source = child.schema.get_column(source_index)
             key = (spec.operation, source_index)
@@ -41,7 +44,7 @@ class AggregatePlan(Plan):
             seen.add(key)
             _validate_spec(spec, source)
             output_type, nullable = _output_type(spec.operation, source)
-            output_name = _output_name(spec.operation, source)
+            output_name = spec.output_name or _output_name(spec.operation, source)
             max_length = source.max_length if output_type == DataType.VARCHAR and source is not None else None
             columns.append(Column(output_name, output_type, nullable=nullable, max_length=max_length))
             resolved.append(ResolvedAggregate(spec.operation, source_index, source.data_type if source else None))
@@ -55,6 +58,17 @@ class AggregatePlan(Plan):
             raise DuplicateColumnError("Duplicate grouping column name.")
         group_indexes = tuple(child.schema.column_index(name) for name in groups)
         group_columns = tuple(child.schema.get_column(index) for index in group_indexes)
+        if group_output_names is not None and (
+            not isinstance(group_output_names, Sequence) or isinstance(group_output_names, (str, bytes))
+        ):
+            raise TypeError("Expected sequence of grouping output names or None.")
+        names = tuple(group_output_names) if group_output_names is not None else tuple(column.name for column in group_columns)
+        if len(names) != len(group_columns) or not all(isinstance(name, str) for name in names):
+            raise ValueError("Grouping output names must match grouping columns.")
+        group_columns = tuple(
+            Column(name, column.data_type, column.nullable, column.max_length)
+            for name, column in zip(names, group_columns)
+        )
         layout_specs = tuple(output_layout) if output_layout is not None else tuple(
             AggregateOutputSpec("AGGREGATE", index) for index in range(len(resolved))
         )

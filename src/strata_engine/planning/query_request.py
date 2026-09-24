@@ -26,7 +26,7 @@ class QueryRequest:
     joined_where: object | None = None
     join_projection: tuple[ColumnRef, ...] | None = None
     join_order_by: tuple[JoinOrderBy, ...] | None = None
-    group_by: tuple[str, ...] | None = None
+    group_by: tuple[str | ColumnRef, ...] | None = None
     aggregate_output: tuple[AggregateOutputSpec, ...] | None = None
 
     def __post_init__(self) -> None:
@@ -81,8 +81,8 @@ class QueryRequest:
             if not isinstance(self.group_by, Sequence) or isinstance(self.group_by, (str, bytes)):
                 raise TypeError("Expected sequence of grouping column names or None for group_by.")
             group_by = tuple(self.group_by)
-            if not group_by or not all(isinstance(item, str) for item in group_by):
-                raise ValueError("group_by must contain one or more column names.")
+            if not group_by or not all(isinstance(item, (str, ColumnRef)) for item in group_by):
+                raise ValueError("group_by must contain one or more column names or ColumnRef values.")
             if self.aggregates is None:
                 raise ValueError("GROUP BY requires aggregate specifications.")
             object.__setattr__(self, "group_by", group_by)
@@ -99,16 +99,24 @@ class QueryRequest:
             raise ValueError("Grouped aggregate requests require aggregate_output.")
         if self.join is not None:
             if not isinstance(self.join, JoinSpec): raise TypeError("join must be a JoinSpec or None.")
-            if self.predicate is not None or self.projection is not None or self.order_by is not None or self.aggregates is not None or self.group_by is not None or self.aggregate_output is not None:
-                raise ValueError("Join requests must use join-specific WHERE, projection, ordering, and no aggregates.")
-            if self.join_projection is None: raise ValueError("Join requests require explicit join_projection.")
-            projection = tuple(self.join_projection)
-            if not projection or not all(isinstance(item, ColumnRef) for item in projection): raise TypeError("join_projection must contain ColumnRef values.")
-            object.__setattr__(self, "join_projection", projection)
-            if self.join_order_by is not None:
-                order = tuple(self.join_order_by)
-                if not all(isinstance(item, JoinOrderBy) for item in order): raise TypeError("join_order_by must contain JoinOrderBy values.")
-                object.__setattr__(self, "join_order_by", order)
+            if self.predicate is not None or self.projection is not None:
+                raise ValueError("Join requests must use join-specific WHERE and projection fields.")
+            if self.aggregates is not None:
+                if self.join_projection is not None or self.join_order_by is not None:
+                    raise ValueError("Aggregate join requests cannot contain ordinary join projection or ordering.")
+                if self.group_by is not None and not all(isinstance(item, ColumnRef) for item in self.group_by):
+                    raise TypeError("Aggregate join grouping columns must be ColumnRef values.")
+            else:
+                if self.order_by is not None or self.group_by is not None or self.aggregate_output is not None:
+                    raise ValueError("Ordinary join requests must use join-specific ordering and no grouping.")
+                if self.join_projection is None: raise ValueError("Join requests require explicit join_projection.")
+                projection = tuple(self.join_projection)
+                if not projection or not all(isinstance(item, ColumnRef) for item in projection): raise TypeError("join_projection must contain ColumnRef values.")
+                object.__setattr__(self, "join_projection", projection)
+                if self.join_order_by is not None:
+                    order = tuple(self.join_order_by)
+                    if not all(isinstance(item, JoinOrderBy) for item in order): raise TypeError("join_order_by must contain JoinOrderBy values.")
+                    object.__setattr__(self, "join_order_by", order)
 
 
 def _validate_count(name: str, value: int) -> None:

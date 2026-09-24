@@ -128,9 +128,12 @@ class Parser:
                 raise SQLParseError(f"Only COUNT accepts '*' at position {self._peek().position}.")
             self._consume(TokenType.RIGHT_PAREN, "')' after COUNT(*)")
             return AggregateCall(name, None)
-        argument = self._consume(TokenType.IDENTIFIER, "aggregate source column").lexeme
+        argument = self._column_ref()
         self._consume(TokenType.RIGHT_PAREN, "')' after aggregate argument")
-        return AggregateCall(name, argument)
+        return AggregateCall(
+            name,
+            argument.column_name if argument.qualifier is None else argument,
+        )
 
     def _column_ref(self) -> QualifiedIdentifier:
         first = self._consume(TokenType.IDENTIFIER, "column reference").lexeme

@@ -6,9 +6,9 @@ Strata is built bottom-up—storage first, then relational data, query execution
 
 ## Status
 
-**Phase 13 — GROUP BY / grouped aggregation is implemented.** It extends Phase 11 global aggregation with single-table grouping, one or more grouping columns, mixed/interleaved grouped and aggregate SELECT output, post-aggregate ORDER BY, and LIMIT/OFFSET.
+**Phase 14 — Two-table INNER JOIN + aggregation is implemented.** It composes the existing join and aggregation operators for global and grouped aggregation over joined rows, including qualified or uniquely resolvable unqualified source references, joined WHERE, post-aggregate ORDER BY, and LIMIT/OFFSET.
 
-Current authoritative test status: **472 passed**, **2 known third-party deprecation warnings**, and **0 failures**.
+Phase 13’s authoritative baseline was **472 passed**, **2 known third-party deprecation warnings**, and **0 failures**. Run the repository test suite to verify the current Phase 14 working tree.
 
 ### Completed phase history
 
@@ -28,6 +28,7 @@ Current authoritative test status: **472 passed**, **2 known third-party depreca
 | 11 — Global Aggregation | Blocking `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`. |
 | 12 — Two-table INNER JOIN | One equality INNER JOIN with qualified references, joined WHERE/ORDER BY, and pagination. |
 | 13 — GROUP BY / Grouped Aggregation | Single-table grouping with one or more columns, existing aggregates, mixed/interleaved output, post-aggregate ORDER BY, and LIMIT/OFFSET. |
+| 14 — Two-table INNER JOIN + Aggregation | Global and grouped aggregation over one equality INNER JOIN, including qualified/unique unqualified references and post-aggregate ordering. |
 
 ## Current architecture
 
@@ -70,6 +71,7 @@ The SQL frontend supports a deliberately narrow SELECT subset:
 - global aggregation with `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`;
 - single-table `GROUP BY` with one or more source columns, mixed/interleaved grouping and aggregate SELECT items, and post-aggregate ordering by exposed output names;
 - exactly one two-table equality `JOIN` / `INNER JOIN`, explicit projections, joined WHERE, joined ORDER BY, and joined LIMIT/OFFSET.
+- global and grouped aggregation over that two-table JOIN, with qualified or uniquely resolvable unqualified aggregate/grouping references; joined WHERE runs before aggregation, while grouped ORDER BY and LIMIT/OFFSET run afterward.
 
 For grouped queries, WHERE runs before aggregation, ORDER BY runs after aggregation, and LIMIT/OFFSET runs last. Every ordinary selected column must appear in `GROUP BY`; GROUP BY without aggregates is unsupported. Generated aggregate output names such as `count_star` may be used as grouped ordering names.
 
@@ -84,7 +86,7 @@ ORDER BY department
 LIMIT 10;
 ```
 
-The SQL subset intentionally does not support HAVING, JOIN + aggregation, aliases, DISTINCT or DISTINCT aggregates, aggregate-call ordering such as `ORDER BY COUNT(*)`, global aggregate ORDER BY, multiple/chained joins, outer joins, non-equality JOIN conditions, or general scalar expressions.
+The SQL subset intentionally does not support HAVING, aliases, DISTINCT or DISTINCT aggregates, aggregate-call ordering such as `ORDER BY COUNT(*)`, global aggregate ORDER BY, multiple/chained joins, outer joins, non-equality JOIN conditions, or general scalar expressions.
 
 ## Repository structure
 
@@ -133,7 +135,7 @@ python -m uvicorn strata_backend.main:app --reload --host 127.0.0.1 --port 8000
 ## Not yet implemented
 
 - query optimizer, cost model, or statistics;
-- HAVING and JOIN + aggregation;
+- HAVING;
 - aliases, DISTINCT, DISTINCT aggregates, subqueries, and broader expression support;
 - multiple/chained joins, outer joins, and non-equality join conditions;
 - secondary indexes;

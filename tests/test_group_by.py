@@ -216,7 +216,7 @@ def test_group_by_parser_forms_and_clause_rejections(catalog: Catalog) -> None:
 
 def test_grouped_binder_and_planning_rejections(catalog: Catalog) -> None:
     binder = Binder(catalog)
-    for sql in ("SELECT department, name, COUNT(*) FROM employees GROUP BY department", "SELECT department, COUNT(*) FROM employees GROUP BY department, Department", "SELECT department, COUNT(*) FROM employees GROUP BY employees.department", "SELECT users.id, COUNT(*) FROM users JOIN orders ON users.id = orders.user_id GROUP BY users.id"):
+    for sql in ("SELECT department, name, COUNT(*) FROM employees GROUP BY department", "SELECT department, COUNT(*) FROM employees GROUP BY department, Department", "SELECT department, COUNT(*) FROM employees GROUP BY employees.department"):
         with pytest.raises(SQLBindingError):
             binder.bind(Parser(Lexer(sql).tokenize()).parse())
     request = binder.bind(Parser(Lexer("SELECT department, COUNT(*) FROM employees GROUP BY department ORDER BY salary").tokenize()).parse())
