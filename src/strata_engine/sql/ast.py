@@ -165,4 +165,31 @@ class InsertStatement:
         object.__setattr__(self, "values", values)
 
 
-Statement = SelectStatement | InsertStatement
+@dataclass(frozen=True, slots=True)
+class ColumnDefinition:
+    """One unresolved CREATE TABLE column definition."""
+
+    name: str
+    type_name: str
+    varchar_length: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CreateTableStatement:
+    """One unresolved minimal CREATE TABLE statement."""
+
+    table_name: str
+    columns: tuple[ColumnDefinition, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table_name, str):
+            raise TypeError(f"table_name must be a str, got {type(self.table_name).__name__}.")
+        if not isinstance(self.columns, Sequence) or isinstance(self.columns, (str, bytes)):
+            raise TypeError("Create table columns must be a sequence of ColumnDefinition objects.")
+        columns = tuple(self.columns)
+        if not all(isinstance(column, ColumnDefinition) for column in columns):
+            raise TypeError("Create table columns must all be ColumnDefinition objects.")
+        object.__setattr__(self, "columns", columns)
+
+
+Statement = SelectStatement | InsertStatement | CreateTableStatement

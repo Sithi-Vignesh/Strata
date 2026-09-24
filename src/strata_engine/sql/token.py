@@ -30,6 +30,13 @@ class TokenType(Enum):
     INSERT = auto()
     INTO = auto()
     VALUES = auto()
+    CREATE = auto()
+    TABLE = auto()
+    TYPE_INTEGER = auto()
+    TYPE_BIGINT = auto()
+    TYPE_FLOAT = auto()
+    TYPE_BOOLEAN = auto()
+    TYPE_VARCHAR = auto()
 
     IDENTIFIER = auto()
     INTEGER = auto()

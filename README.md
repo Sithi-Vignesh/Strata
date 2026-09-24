@@ -6,7 +6,7 @@ Strata is built bottom-up—storage first, then relational data, query execution
 
 ## Status
 
-**Phase 16 — Minimal single-row SQL INSERT is implemented.** `StrataEngine.execute()` supports the existing SELECT pipeline and constrained `INSERT INTO table VALUES (...)` commands.
+**Phase 17 — Minimal SQL CREATE TABLE is implemented.** `StrataEngine.execute()` supports the existing SELECT pipeline, constrained `INSERT INTO table VALUES (...)` commands, and minimal `CREATE TABLE` commands.
 
 Phase 13’s authoritative baseline was **472 passed**, **2 known third-party deprecation warnings**, and **0 failures**. Run the repository test suite to verify the current Phase 14 working tree.
 
@@ -31,6 +31,7 @@ Phase 13’s authoritative baseline was **472 passed**, **2 known third-party de
 | 14 — Two-table INNER JOIN + Aggregation | Global and grouped aggregation over one equality INNER JOIN, including qualified/unique unqualified references and post-aggregate ordering. |
 | 15 — Engine SQL Integration | Public `StrataEngine.execute()` facade that materializes existing SELECT results as `QueryResult`. |
 | 16 — Minimal SQL INSERT | One ordered literal VALUES row inserted through the existing typed table path. |
+| 17 — Minimal SQL CREATE TABLE | Persistent table creation through the existing schema and catalog path. |
 
 ## Current architecture
 
@@ -108,7 +109,7 @@ with StrataEngine("database") as engine:
         print(row.values)
 ```
 
-`execute()` supports the existing SELECT subset and the constrained INSERT form below; SQL DDL and other DML are not yet supported.
+`execute()` supports the existing SELECT subset, constrained INSERT, and the minimal CREATE TABLE form below.
 
 The first supported SQL mutation is a deliberately constrained INSERT:
 
@@ -117,7 +118,16 @@ inserted = engine.execute("INSERT INTO users VALUES (2, 'Bea')")
 assert inserted.affected_rows == 1
 ```
 
-INSERT accepts exactly one literal row, requires all table columns in schema order, and returns `CommandResult(affected_rows=1)`. Column lists, multi-row VALUES, `INSERT ... SELECT`, and `RETURNING` are not supported. SQL DDL and other DML statements are still unavailable.
+INSERT accepts exactly one literal row, requires all table columns in schema order, and returns `CommandResult(affected_rows=1)`. Column lists, multi-row VALUES, `INSERT ... SELECT`, and `RETURNING` are not supported.
+
+Minimal SQL CREATE TABLE accepts one or more ordered columns using `INTEGER`, `BIGINT`, `FLOAT`, `BOOLEAN`, or required-length `VARCHAR(n)`:
+
+```python
+created = engine.execute("CREATE TABLE users (id INTEGER, name VARCHAR(100))")
+assert created.affected_rows == 0
+```
+
+All SQL-created columns are currently non-nullable. `NULL`/`NOT NULL`, `PRIMARY KEY`, `UNIQUE`, `DEFAULT`, `CHECK`, `FOREIGN KEY`, `IF NOT EXISTS`, `CREATE TABLE AS SELECT`, `DROP`, `ALTER`, and DDL transactions/recovery are unsupported. CREATE, INSERT, and SELECT can form a basic SQL-only workflow.
 
 ## Repository structure
 

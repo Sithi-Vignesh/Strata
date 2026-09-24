@@ -28,6 +28,13 @@ _KEYWORDS: dict[str, TokenType] = {
     "INSERT": TokenType.INSERT,
     "INTO": TokenType.INTO,
     "VALUES": TokenType.VALUES,
+    "CREATE": TokenType.CREATE,
+    "TABLE": TokenType.TABLE,
+    "INTEGER": TokenType.TYPE_INTEGER,
+    "BIGINT": TokenType.TYPE_BIGINT,
+    "FLOAT": TokenType.TYPE_FLOAT,
+    "BOOLEAN": TokenType.TYPE_BOOLEAN,
+    "VARCHAR": TokenType.TYPE_VARCHAR,
 }
 
 

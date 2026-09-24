@@ -17,6 +17,8 @@ from strata_engine.sql.ast import (
     SelectAll,
     SelectStatement,
     InsertStatement,
+    ColumnDefinition,
+    CreateTableStatement,
     Statement,
 )
 from strata_engine.sql.binder import Binder
@@ -49,6 +51,8 @@ __all__ = [
     "OrderByItem",
     "SelectStatement",
     "InsertStatement",
+    "ColumnDefinition",
+    "CreateTableStatement",
     "Statement",
     "Parser",
     "Binder",

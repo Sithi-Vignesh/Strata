@@ -43,6 +43,41 @@ def test_lexer_recognizes_insert_keywords_case_insensitively() -> None:
     ]
 
 
+def test_lexer_recognizes_create_table_and_type_keywords_without_changing_numeric_literals() -> None:
+    tokens = Lexer("cReAtE tAbLe users (id iNtEgEr, big bIgInT, score fLoAt, active bOoLeAn, name vArChAr(100), 1, 1.0)").tokenize()
+    assert [token.type for token in tokens] == [
+        TokenType.CREATE,
+        TokenType.TABLE,
+        TokenType.IDENTIFIER,
+        TokenType.LEFT_PAREN,
+        TokenType.IDENTIFIER,
+        TokenType.TYPE_INTEGER,
+        TokenType.COMMA,
+        TokenType.IDENTIFIER,
+        TokenType.TYPE_BIGINT,
+        TokenType.COMMA,
+        TokenType.IDENTIFIER,
+        TokenType.TYPE_FLOAT,
+        TokenType.COMMA,
+        TokenType.IDENTIFIER,
+        TokenType.TYPE_BOOLEAN,
+        TokenType.COMMA,
+        TokenType.IDENTIFIER,
+        TokenType.TYPE_VARCHAR,
+        TokenType.LEFT_PAREN,
+        TokenType.INTEGER,
+        TokenType.RIGHT_PAREN,
+        TokenType.COMMA,
+        TokenType.INTEGER,
+        TokenType.COMMA,
+        TokenType.FLOAT,
+        TokenType.RIGHT_PAREN,
+        TokenType.EOF,
+    ]
+    assert tokens[22].literal == 1
+    assert tokens[24].literal == 1.0
+
+
 def test_lexer_recognizes_punctuation_and_all_comparison_spellings() -> None:
     tokens = Lexer("*,; = == != <> < <= > >=").tokenize()
     assert [token.type for token in tokens] == [

@@ -303,3 +303,44 @@ def test_engine_execute_insert_float_strictness_persistence_and_command_result_i
     with StrataEngine(database) as engine:
         result = engine.execute("SELECT id, value FROM measurements ORDER BY id")
         assert [row.values for row in result.rows] == [(1, 1.0), (3, -2.5)]
+
+
+# ============================================================================
+# Phase 17: Minimal SQL CREATE TABLE
+# ============================================================================
+
+
+def test_engine_execute_create_table_then_insert_and_select(tmp_path: Path) -> None:
+    with StrataEngine(tmp_path / "database") as engine:
+        assert engine.execute("CREATE TABLE users (id INTEGER, name VARCHAR(100));") == CommandResult(0)
+        assert engine.execute("INSERT INTO users VALUES (1, 'Ada')") == CommandResult(1)
+        selected = engine.execute("SELECT id, name FROM users")
+        assert isinstance(selected, QueryResult)
+        assert [row.values for row in selected.rows] == [(1, "Ada")]
+
+
+def test_engine_execute_create_table_preserves_catalog_schema_and_lifecycle_errors(tmp_path: Path) -> None:
+    from strata_engine.catalog import TableAlreadyExistsError
+    from strata_engine.schema import InvalidColumnError
+    from strata_engine.storage import StorageClosedError
+
+    database = tmp_path / "database"
+    with StrataEngine(database) as engine:
+        engine.execute("CREATE TABLE Users (Id INTEGER, Name VARCHAR(100))")
+        with pytest.raises(TableAlreadyExistsError):
+            engine.execute("CREATE TABLE users (id INTEGER)")
+        with pytest.raises(InvalidColumnError):
+            engine.execute("CREATE TABLE invalid (name VARCHAR(0))")
+
+    with pytest.raises(StorageClosedError):
+        StrataEngine(database).execute("CREATE TABLE closed_table (id INTEGER)")
+
+    with StrataEngine(database) as engine:
+        table = engine.get_table("users")
+        assert table.name == "Users"
+        assert [(column.name, column.data_type, column.nullable, column.max_length) for column in table.schema.columns] == [
+            ("Id", DataType.INTEGER, False, None),
+            ("Name", DataType.VARCHAR, False, 100),
+        ]
+        assert engine.execute("INSERT INTO USERS VALUES (1, 'Ada')") == CommandResult(1)
+        assert [row.values for row in engine.execute("SELECT Id, Name FROM users").rows] == [(1, "Ada")]

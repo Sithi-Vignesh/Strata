@@ -19,6 +19,8 @@ from strata_engine.sql.ast import (
     SelectAll,
     SelectStatement,
     InsertStatement,
+    ColumnDefinition,
+    CreateTableStatement,
     Statement,
 )
 from strata_engine.sql.exceptions import SQLParseError
@@ -57,8 +59,10 @@ class Parser:
             statement = self._select_statement()
         elif self._peek().type == TokenType.INSERT:
             statement = self._insert_statement()
+        elif self._peek().type == TokenType.CREATE:
+            statement = self._create_table_statement()
         else:
-            self._raise_expected("SELECT or INSERT")
+            self._raise_expected("SELECT, INSERT, or CREATE")
 
         self._match(TokenType.SEMICOLON)
         self._consume(TokenType.EOF, "end of statement")
@@ -129,6 +133,40 @@ class Parser:
             values.append(self._consume_insert_literal())
         self._consume(TokenType.RIGHT_PAREN, "')' after INSERT values")
         return InsertStatement(table_name, tuple(values))
+
+    def _create_table_statement(self) -> CreateTableStatement:
+        """Parse one minimal CREATE TABLE statement without its terminator."""
+        self._consume(TokenType.CREATE, "CREATE")
+        self._consume(TokenType.TABLE, "TABLE after CREATE")
+        table_name = self._consume(TokenType.IDENTIFIER, "table identifier").lexeme
+        self._consume(TokenType.LEFT_PAREN, "'(' before column definitions")
+        columns = [self._column_definition()]
+        while self._match(TokenType.COMMA):
+            columns.append(self._column_definition())
+        self._consume(TokenType.RIGHT_PAREN, "')' after column definitions")
+        return CreateTableStatement(table_name, tuple(columns))
+
+    def _column_definition(self) -> ColumnDefinition:
+        name = self._consume(TokenType.IDENTIFIER, "column identifier").lexeme
+        token = self._peek()
+        type_names = {
+            TokenType.TYPE_INTEGER: "INTEGER",
+            TokenType.TYPE_BIGINT: "BIGINT",
+            TokenType.TYPE_FLOAT: "FLOAT",
+            TokenType.TYPE_BOOLEAN: "BOOLEAN",
+            TokenType.TYPE_VARCHAR: "VARCHAR",
+        }
+        if token.type not in type_names:
+            self._raise_expected("INTEGER, BIGINT, FLOAT, BOOLEAN, or VARCHAR type")
+        self._advance()
+        type_name = type_names[token.type]
+        if type_name != "VARCHAR":
+            return ColumnDefinition(name, type_name)
+        self._consume(TokenType.LEFT_PAREN, "'(' after VARCHAR")
+        length = self._consume(TokenType.INTEGER, "integer VARCHAR length").literal
+        assert type(length) is int
+        self._consume(TokenType.RIGHT_PAREN, "')' after VARCHAR length")
+        return ColumnDefinition(name, type_name, length)
 
     def _projection(self) -> SelectAll | ColumnList | AggregateList | GroupedAggregateList:
         if self._match(TokenType.STAR):

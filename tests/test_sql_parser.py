@@ -8,6 +8,8 @@ from strata_engine.sql import (
     AndExpression,
     ColumnList,
     ComparisonExpression,
+    CreateTableStatement,
+    ColumnDefinition,
     IsNullExpression,
     InsertStatement,
     Lexer,
@@ -35,6 +37,27 @@ def test_parser_insert_values_literals_and_optional_semicolon() -> None:
     statement = parse("INSERT INTO users VALUES (1, -2.5, 'O''Brien', TRUE, NULL);")
     assert statement == InsertStatement("users", (1, -2.5, "O'Brien", True, None))
     assert parse("insert into users values (1)") == InsertStatement("users", (1,))
+
+
+def test_parser_create_table_builds_ordered_syntax_only_columns() -> None:
+    statement = parse("""create table Users (
+        id integer,
+        audit_id bigint,
+        score float,
+        active boolean,
+        name varchar(100)
+    );""")
+    assert statement == CreateTableStatement(
+        "Users",
+        (
+            ColumnDefinition("id", "INTEGER"),
+            ColumnDefinition("audit_id", "BIGINT"),
+            ColumnDefinition("score", "FLOAT"),
+            ColumnDefinition("active", "BOOLEAN"),
+            ColumnDefinition("name", "VARCHAR", 100),
+        ),
+    )
+    assert parse("CREATE TABLE users (id INTEGER)").columns == (ColumnDefinition("id", "INTEGER"),)
 
 
 def test_parser_column_list_comparison_and_scalar_values() -> None:
@@ -95,6 +118,27 @@ def test_parser_rejects_syntax_outside_the_locked_grammar(sql: str) -> None:
     ],
 )
 def test_parser_rejects_unsupported_insert_forms(sql: str) -> None:
+    with pytest.raises(SQLParseError):
+        parse(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE TABLE t ()",
+        "CREATE TABLE t (id INTEGER,)",
+        "CREATE TABLE t (id INTEGER name VARCHAR(10))",
+        "CREATE TABLE t (name VARCHAR)",
+        "CREATE TABLE t (name VARCHAR())",
+        "CREATE TABLE t (name VARCHAR(foo))",
+        "CREATE TABLE t (id INTEGER(10))",
+        "CREATE TABLE t (x UNKNOWN)",
+        "CREATE TABLE t (id INTEGER NOT NULL)",
+        "CREATE TABLE t (id INTEGER NULL)",
+        "CREATE TABLE t (id INTEGER); SELECT * FROM t",
+    ],
+)
+def test_parser_rejects_unsupported_create_table_forms(sql: str) -> None:
     with pytest.raises(SQLParseError):
         parse(sql)
 

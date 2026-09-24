@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from strata_engine.catalog import Catalog, Table, TableNotFoundError
-from strata_engine.commands import InsertCommand
+from strata_engine.commands import CreateTableCommand, InsertCommand
 from strata_engine.execution import (
     AndPredicate,
     ComparisonPredicate,
@@ -19,11 +19,12 @@ from strata_engine.schema import (
     ColumnNotFoundError,
     DataType,
     DuplicateColumnError,
+    InvalidColumnError,
     Schema,
     TypeMismatchError,
 )
 from strata_engine.sql import Binder, Lexer, Parser, SQLBindingError
-from strata_engine.sql.ast import InsertStatement, SQLPredicate, SelectAll, SelectStatement
+from strata_engine.sql.ast import CreateTableStatement, InsertStatement, SQLPredicate, SelectAll, SelectStatement
 from strata_engine.storage import StorageClosedError
 
 
@@ -64,6 +65,33 @@ def test_binder_resolves_insert_target_without_revalidating_values(catalog) -> N
 
     with pytest.raises(TableNotFoundError):
         Binder(cat).bind(InsertStatement("missing", (1,)))
+
+
+def test_binder_resolves_create_table_to_real_schema(catalog) -> None:
+    cat, _ = catalog
+    command = bind(cat, "CREATE TABLE Metrics (id INTEGER, audit_id BIGINT, score FLOAT, active BOOLEAN, name VARCHAR(100))")
+    assert isinstance(command, CreateTableCommand)
+    assert command.table_name == "Metrics"
+    assert [(column.name, column.data_type, column.nullable, column.max_length) for column in command.schema.columns] == [
+        ("id", DataType.INTEGER, False, None),
+        ("audit_id", DataType.BIGINT, False, None),
+        ("score", DataType.FLOAT, False, None),
+        ("active", DataType.BOOLEAN, False, None),
+        ("name", DataType.VARCHAR, False, 100),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("sql", "error_type"), [
+        ("CREATE TABLE t (id INTEGER, ID BIGINT)", DuplicateColumnError),
+        ("CREATE TABLE t (name VARCHAR(0))", InvalidColumnError),
+        ("CREATE TABLE t (name VARCHAR(4081))", InvalidColumnError),
+    ],
+)
+def test_binder_create_table_preserves_existing_schema_validation(catalog, sql: str, error_type: type[Exception]) -> None:
+    cat, _ = catalog
+    with pytest.raises(error_type):
+        bind(cat, sql)
 
 
 def test_binder_translates_existing_predicate_types(catalog) -> None:

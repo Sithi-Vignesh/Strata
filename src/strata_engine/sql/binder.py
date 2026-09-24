@@ -1,7 +1,7 @@
 """Binding from unresolved SQL syntax to existing Strata query requests."""
 
 from strata_engine.catalog import Catalog
-from strata_engine.commands import InsertCommand
+from strata_engine.commands import CreateTableCommand, InsertCommand
 from strata_engine.execution import (
     AndPredicate,
     ComparisonPredicate,
@@ -30,9 +30,11 @@ from strata_engine.sql.ast import (
     SelectAll,
     SelectStatement,
     InsertStatement,
+    CreateTableStatement,
     Statement,
 )
 from strata_engine.sql.exceptions import SQLBindingError
+from strata_engine.schema import Column, DataType, Schema
 
 
 class Binder:
@@ -43,12 +45,14 @@ class Binder:
             raise TypeError(f"Expected Catalog instance, got {type(catalog).__name__}.")
         self._catalog = catalog
 
-    def bind(self, statement: Statement) -> QueryRequest | InsertCommand:
+    def bind(self, statement: Statement) -> QueryRequest | InsertCommand | CreateTableCommand:
         """Resolve one statement without planning, scanning, or closing borrowed resources."""
         if isinstance(statement, InsertStatement):
             return InsertCommand(self._catalog.get_table(statement.table_name), statement.values)
+        if isinstance(statement, CreateTableStatement):
+            return self._bind_create_table(statement)
         if not isinstance(statement, SelectStatement):
-            raise TypeError(f"Expected SelectStatement or InsertStatement instance, got {type(statement).__name__}.")
+            raise TypeError(f"Expected supported SQL statement, got {type(statement).__name__}.")
 
         table = self._catalog.get_table(statement.table_name)
         if statement.join is not None:
@@ -97,6 +101,23 @@ class Binder:
             offset=statement.offset,
             aggregates=aggregates,
         )
+
+    def _bind_create_table(self, statement: CreateTableStatement) -> CreateTableCommand:
+        data_types = {
+            "INTEGER": DataType.INTEGER,
+            "BIGINT": DataType.BIGINT,
+            "FLOAT": DataType.FLOAT,
+            "BOOLEAN": DataType.BOOLEAN,
+            "VARCHAR": DataType.VARCHAR,
+        }
+        columns = []
+        for definition in statement.columns:
+            data_type = data_types[definition.type_name]
+            if data_type is DataType.VARCHAR:
+                columns.append(Column(definition.name, data_type, max_length=definition.varchar_length))
+            else:
+                columns.append(Column(definition.name, data_type))
+        return CreateTableCommand(statement.table_name, Schema(columns))
 
     def _bind_grouped(self, statement: SelectStatement, table) -> QueryRequest:
         if any(ref.qualifier is not None for ref in statement.group_by or ()):
