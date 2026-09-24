@@ -6,7 +6,7 @@ Strata is built bottom-up—storage first, then relational data, query execution
 
 ## Status
 
-**Phase 14 — Two-table INNER JOIN + aggregation is implemented.** It composes the existing join and aggregation operators for global and grouped aggregation over joined rows, including qualified or uniquely resolvable unqualified source references, joined WHERE, post-aggregate ORDER BY, and LIMIT/OFFSET.
+**Phase 15 — Engine SQL integration is implemented.** `StrataEngine.execute()` is the public facade for the existing SELECT pipeline and returns a fully materialized `QueryResult` containing its schema and schema-bound rows.
 
 Phase 13’s authoritative baseline was **472 passed**, **2 known third-party deprecation warnings**, and **0 failures**. Run the repository test suite to verify the current Phase 14 working tree.
 
@@ -29,6 +29,7 @@ Phase 13’s authoritative baseline was **472 passed**, **2 known third-party de
 | 12 — Two-table INNER JOIN | One equality INNER JOIN with qualified references, joined WHERE/ORDER BY, and pagination. |
 | 13 — GROUP BY / Grouped Aggregation | Single-table grouping with one or more columns, existing aggregates, mixed/interleaved output, post-aggregate ORDER BY, and LIMIT/OFFSET. |
 | 14 — Two-table INNER JOIN + Aggregation | Global and grouped aggregation over one equality INNER JOIN, including qualified/unique unqualified references and post-aggregate ordering. |
+| 15 — Engine SQL Integration | Public `StrataEngine.execute()` facade that materializes existing SELECT results as `QueryResult`. |
 
 ## Current architecture
 
@@ -87,6 +88,26 @@ LIMIT 10;
 ```
 
 The SQL subset intentionally does not support HAVING, aliases, DISTINCT or DISTINCT aggregates, aggregate-call ordering such as `ORDER BY COUNT(*)`, global aggregate ORDER BY, multiple/chained joins, outer joins, non-equality JOIN conditions, or general scalar expressions.
+
+Execute the supported SELECT subset through the engine facade. `QueryResult` retains the output schema even when no rows match, and its rows are existing schema-bound `Tuple` values:
+
+```python
+from strata_engine import Column, DataType, Schema, StrataEngine
+
+with StrataEngine("database") as engine:
+    users = engine.create_table("users", Schema([
+        Column("id", DataType.INTEGER),
+        Column("name", DataType.VARCHAR, max_length=32),
+    ]))
+    users.insert([1, "Ada"])
+
+    result = engine.execute("SELECT name FROM users")
+    print(result.schema.column_names)
+    for row in result.rows:
+        print(row.values)
+```
+
+`execute()` currently supports only the existing SELECT subset; SQL DDL and DML are not yet supported.
 
 ## Repository structure
 

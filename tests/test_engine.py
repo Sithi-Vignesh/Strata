@@ -1,6 +1,6 @@
 """Unit tests for the strata_engine package.
 
-Validates the Phase 0 foundational requirements:
+Validates the public engine facade:
 - Successful import and initialization
 - Handling of optional data directory paths without touching disk
 - Deterministic status reporting
@@ -9,7 +9,7 @@ Validates the Phase 0 foundational requirements:
 
 from pathlib import Path
 import pytest
-from strata_engine import StrataEngine
+from strata_engine import Column, DataType, QueryResult, Schema, StrataEngine, Tuple
 
 
 def test_engine_import() -> None:
@@ -64,13 +64,12 @@ def test_engine_status_determinism() -> None:
     }
 
 
-def test_engine_does_not_claim_sql_execution() -> None:
-    """Verify execute placeholder raises NotImplementedError and does not claim SQL support."""
-    engine = StrataEngine()
-    with pytest.raises(NotImplementedError) as exc_info:
-        engine.execute("SELECT 1;")
+def test_engine_execute_requires_an_open_engine(tmp_path: Path) -> None:
+    """Verify SQL execution follows the established catalog lifecycle."""
+    from strata_engine.storage import StorageClosedError
 
-    assert "SQL execution is not implemented in Phase 0" in str(exc_info.value)
+    with pytest.raises(StorageClosedError):
+        StrataEngine(tmp_path).execute("SELECT * FROM users")
 
 
 # ============================================================================
@@ -179,3 +178,79 @@ def test_engine_operations_closed_error(tmp_path: Path) -> None:
         engine.drop_table("test")
     with pytest.raises(StorageClosedError):
         engine.list_tables()
+
+
+# ============================================================================
+# Phase 15: Engine SQL Integration
+# ============================================================================
+
+
+@pytest.fixture
+def sql_engine(tmp_path: Path):
+    with StrataEngine(tmp_path / "database") as engine:
+        users = engine.create_table(
+            "users",
+            Schema([
+                Column("id", DataType.INTEGER),
+                Column("name", DataType.VARCHAR, max_length=20),
+                Column("country", DataType.VARCHAR, nullable=True, max_length=8),
+            ]),
+        )
+        orders = engine.create_table(
+            "orders",
+            Schema([
+                Column("id", DataType.INTEGER),
+                Column("user_id", DataType.INTEGER),
+                Column("total", DataType.INTEGER),
+            ]),
+        )
+        users.insert([1, "Ada", "IN"]); users.insert([2, "Ben", "US"]); users.insert([3, "Cal", "IN"])
+        orders.insert([10, 1, 100]); orders.insert([11, 1, 50]); orders.insert([12, 2, 200])
+        yield engine
+
+
+def test_engine_execute_materializes_select_projection_order_and_empty_result(sql_engine: StrataEngine) -> None:
+    result = sql_engine.execute("SELECT name FROM users ORDER BY id DESC LIMIT 2 OFFSET 1")
+    assert isinstance(result, QueryResult)
+    assert result.schema.column_names == ("name",)
+    assert all(isinstance(row, Tuple) for row in result.rows)
+    assert [row.values for row in result.rows] == [("Ben",), ("Ada",)]
+    assert sql_engine.execute("SELECT name FROM users WHERE id > 99").rows == ()
+
+
+def test_engine_execute_aggregates_groups_joins_and_preserves_public_schema(sql_engine: StrataEngine) -> None:
+    count = sql_engine.execute("SELECT COUNT(*) FROM users")
+    assert count.schema.column_names == ("count_star",)
+    assert [row.values for row in count.rows] == [(3,)]
+
+    grouped = sql_engine.execute("SELECT country, COUNT(*) FROM users GROUP BY country ORDER BY count_star DESC, country")
+    assert grouped.schema.column_names == ("country", "count_star")
+    assert [row.values for row in grouped.rows] == [("IN", 2), ("US", 1)]
+
+    joined = sql_engine.execute("SELECT users.name, orders.total FROM users JOIN orders ON users.id = orders.user_id ORDER BY orders.id")
+    assert joined.schema.column_names == ("name", "total")
+    assert all(not name.startswith("_j_") for name in joined.schema.column_names)
+    assert [row.values for row in joined.rows] == [("Ada", 100), ("Ada", 50), ("Ben", 200)]
+
+    joined_grouped = sql_engine.execute("SELECT users.country, COUNT(*) FROM users JOIN orders ON users.id = orders.user_id GROUP BY users.country ORDER BY count_star DESC")
+    assert joined_grouped.schema.column_names == ("country", "count_star")
+    assert [row.values for row in joined_grouped.rows] == [("IN", 2), ("US", 1)]
+
+
+def test_engine_execute_propagates_existing_errors_and_query_result_is_immutable(sql_engine: StrataEngine) -> None:
+    from dataclasses import FrozenInstanceError
+    from strata_engine.catalog import TableNotFoundError
+    from strata_engine.schema import ColumnNotFoundError
+    from strata_engine.sql import SQLParseError
+
+    with pytest.raises(SQLParseError):
+        sql_engine.execute("SELECT FROM users")
+    with pytest.raises(TableNotFoundError):
+        sql_engine.execute("SELECT * FROM missing")
+    with pytest.raises(ColumnNotFoundError):
+        sql_engine.execute("SELECT missing FROM users")
+
+    result = sql_engine.execute("SELECT name FROM users ORDER BY id LIMIT 1")
+    with pytest.raises(FrozenInstanceError):
+        result.rows = ()  # type: ignore[misc]
+    assert result.rows[0].values == ("Ada",)

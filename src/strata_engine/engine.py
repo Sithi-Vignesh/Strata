@@ -9,7 +9,10 @@ from typing import Any, List, Optional, Union
 
 from strata_engine.catalog.catalog import Catalog
 from strata_engine.catalog.table import Table
+from strata_engine.planning import Planner
+from strata_engine.result import QueryResult
 from strata_engine.schema.schema import Schema
+from strata_engine.sql import Binder, Lexer, Parser
 from strata_engine.storage.exceptions import StorageClosedError
 
 
@@ -152,19 +155,20 @@ class StrataEngine:
             "data_dir": str(self._data_dir) if self._data_dir else None,
         }
 
-    def execute(self, sql: str) -> None:
-        """Placeholder for SQL execution interface.
+    def execute(self, sql: str) -> QueryResult:
+        """Execute one supported SELECT statement and materialize its result.
 
-        Args:
-            sql: SQL statement string.
-
-        Raises:
-            NotImplementedError: SQL execution is deferred to future phases.
+        The engine owns the complete operator lifecycle; returned rows remain
+        usable after their operator has closed.
         """
-        raise NotImplementedError(
-            "SQL execution is not implemented in Phase 0. "
-            "Storage manager, catalog, and query execution engine will be added in future phases."
-        )
+        statement = Parser(Lexer(sql).tokenize()).parse()
+        request = Binder(self.catalog).bind(statement)
+        plan = Planner().plan(request)
+        operator = plan.create_operator()
+        schema = operator.schema
+        with operator:
+            rows = tuple(operator)
+        return QueryResult(schema=schema, rows=rows)
 
     def __enter__(self) -> "StrataEngine":
         return self.open()
