@@ -1,14 +1,14 @@
 # Strata
 
-> **Collaborative project and task-management application intended to be powered by a custom relational database engine written from scratch in Python.**
+> A CSE302L / BCSE302P Database Systems project: a custom relational database engine written from scratch in Python, with a future application backend and frontend.
 
-Strata is a CSE302L / BCSE302P Database Systems project built bottom-up: first the database engine, then the application-domain backend and frontend. It uses no external database engine or ORM.
+Strata is built bottom-up—storage first, then relational data, query execution and planning, SQL, and finally application features. It uses no external database engine or ORM.
 
 ## Status
 
-**Phase 12 — Two-table INNER JOIN is implemented.** It adds one nested-loop INNER equality join with qualified references, joined WHERE, ORDER BY, and LIMIT/OFFSET.
+**Phase 13 — GROUP BY / grouped aggregation is implemented.** It extends Phase 11 global aggregation with single-table grouping, one or more grouping columns, mixed/interleaved grouped and aggregate SELECT output, post-aggregate ORDER BY, and LIMIT/OFFSET.
 
-Before Phase 8, the suite had **291 passing tests** across storage, buffer pooling, heap files, schema and serialization, catalog and tables, query execution, query planning, and engine/backend integration. Two third-party dependency deprecation warnings are known and are not project test failures.
+Current authoritative test status: **472 passed**, **2 known third-party deprecation warnings**, and **0 failures**.
 
 ### Completed phase history
 
@@ -21,254 +21,126 @@ Before Phase 8, the suite had **291 passing tests** across storage, buffer pooli
 | 4 — Heap File | Multi-page, variable-length record storage over slotted pages. |
 | 5 — Schema, Tuple Serialization, Catalog, and Table | Typed relational rows, persistent metadata, and table operations. |
 | 6 — Query Execution | Volcano-style TableScan, Filter, and Projection operators. |
-| 7 — Query Planning | Immutable reusable plan trees that construct fresh Phase 6 operator trees. |
-| 8 — Minimal SQL SELECT Frontend + Binding | A single-table read-only SQL frontend that binds to existing QueryRequest, Planner, and operators. |
-| 9 — Compound Predicate Expressions | Boolean WHERE composition with AND, OR, NOT, predicate grouping parentheses, and conventional precedence. |
-| 10 — ORDER BY + LIMIT/OFFSET | Stable in-memory ordering, ASC/DESC multi-column ORDER BY, and streaming LIMIT/OFFSET. |
-| 11 — Global Aggregation | Blocking global `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`, with WHERE before aggregation and LIMIT after it. |
-| 12 — Two-table INNER JOIN | One equality INNER JOIN across two distinct tables, qualified references, joined WHERE/ORDER BY, and pagination. |
+| 7 — Query Planning | Immutable reusable plan trees that construct fresh operator trees. |
+| 8 — Minimal SQL SELECT Frontend + Binding | A read-only SQL frontend that binds syntax to existing query intent. |
+| 9 — Compound Predicate Expressions | Boolean WHERE composition with AND, OR, NOT, parentheses, and conventional precedence. |
+| 10 — ORDER BY + LIMIT/OFFSET | Stable in-memory ordering and streaming pagination. |
+| 11 — Global Aggregation | Blocking `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`. |
+| 12 — Two-table INNER JOIN | One equality INNER JOIN with qualified references, joined WHERE/ORDER BY, and pagination. |
+| 13 — GROUP BY / Grouped Aggregation | Single-table grouping with one or more columns, existing aggregates, mixed/interleaved output, post-aggregate ORDER BY, and LIMIT/OFFSET. |
 
-| 13 - GROUP BY | Single-table grouped aggregation with mixed, ordered group/aggregate SELECT lists, post-aggregate ORDER BY, and LIMIT/OFFSET. |
-
-## Architecture
+## Current architecture
 
 The engine layers remain deliberately one-directional:
 
-~~~text
+```text
+SQL
+ ↓
 Planning
-    ↓
+ ↓
 Execution
-    ↓
-Schema / Catalog
-    ↓
-Storage
-~~~
+ ↓
+Schema / Catalog / Table
+ ↓
+Heap / Buffer Management
+ ↓
+Pages / Records
+ ↓
+Disk
+```
 
-Planning may depend on execution; execution must not depend on planning. The backend communicates with the public engine API through EngineAdapter and does not manipulate storage internals.
+SQL AST nodes are immutable, syntax-only, and unresolved. The Binder translates syntax into resolved query intent; the Planner turns that intent into physical plan trees. Execution does not depend on Planning or SQL, and Planning does not depend on SQL. The backend uses the public engine API through `EngineAdapter` and does not manipulate storage internals.
 
-## Phase 5: relational schema, serialization, catalog, and tables
+## Historical phase notes
 
-Phase 5 turns opaque heap-file records into typed relational data.
+Phase 5 introduced typed relational data: `DataType`, immutable `Column` and `Schema`, schema-bound `Tuple`, binary serialization, persistent `Catalog`, and `Table` insert/get/delete/scan/count operations.
 
-- **DataType** supports INTEGER, BIGINT, FLOAT, BOOLEAN, and VARCHAR.
-- **Column** provides immutable definitions with identifier validation, nullability, and VARCHAR length rules.
-- **Schema** supports 1–256 columns, preserves column names, resolves names case-insensitively, rejects case-insensitive duplicates, and computes a deterministic fingerprint.
-- **Tuple and TupleSerializer** provide immutable schema-bound rows; strict runtime type validation; a null bitmap; big-endian binary serialization; UTF-8 VARCHAR; schema-fingerprint checking; a maximum serialized tuple size of 4084 bytes; and corruption or schema-mismatch detection.
-- **Catalog and Table** persist metadata in catalog/tables.db and catalog/columns.db, store each table in its own file, allocate monotonic high-water-mark table IDs without reuse, reconcile orphan table files, and provide create_table, get_table, has_table, drop_table, and list_tables.
-- **Table** offers typed insert, get, delete, scan, and count operations with explicit lifecycle management.
+At the completion of Phase 6, query execution introduced the Volcano-style `TableScan`, `Filter`, and `Projection` operators with explicit `open()` / `next()` / `close()` lifecycle rules. At that historical point, joins, aggregates, sorting, SQL parsing, and pagination had not yet been implemented; later phases added them.
 
-## Phase 6: query execution
+Phase 7 introduced immutable reusable plans. Each `create_operator()` call creates a fresh unopened tree. Current plans include scan, filter, projection, sort, limit, aggregate, join, and join-projection planning.
 
-The execution package implements a streaming Volcano-style pipeline:
+## Current SQL capability
 
-~~~text
-Table
-  ↓
-TableScan
-  ↓
-Filter
-  ↓
-Projection
-~~~
+The SQL frontend supports a deliberately narrow SELECT subset:
 
-Operator instances follow an explicit lifecycle:
+- single-table SELECT with `*` or explicit projection;
+- `WHERE`, including `AND`, `OR`, `NOT`, parentheses, comparisons, `IS NULL`, and `IS NOT NULL`;
+- source-column `ORDER BY` with ASC/DESC and multiple items;
+- `LIMIT` and `LIMIT ... OFFSET ...`;
+- global aggregation with `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`;
+- single-table `GROUP BY` with one or more source columns, mixed/interleaved grouping and aggregate SELECT items, and post-aggregate ordering by exposed output names;
+- exactly one two-table equality `JOIN` / `INNER JOIN`, explicit projections, joined WHERE, joined ORDER BY, and joined LIMIT/OFFSET.
 
-~~~text
-UNINITIALIZED
-  → open() → ACTIVE
-  → EOF → EXHAUSTED
-  → close() → CLOSED
-~~~
+For grouped queries, WHERE runs before aggregation, ORDER BY runs after aggregation, and LIMIT/OFFSET runs last. Every ordinary selected column must appear in `GROUP BY`; GROUP BY without aggregates is unsupported. Generated aggregate output names such as `count_star` may be used as grouped ordering names.
 
-- Calling next() before open() or after close() is invalid.
-- EOF returns None repeatedly.
-- close() is idempotent; failures clean up while preserving the original exception.
-- Iterator use opens and closes an operator only when it owns that lifecycle.
-- Projection owns its child (such as Filter); Filter owns its child (such as TableScan); TableScan borrows its Table. Closing operators never closes the underlying Table.
-
-### Predicates and projection
-
-- ComparisonPredicate supports =, ==, !=, <>, <, <=, >, and >=; == normalizes to =.
-- Ordinary comparisons against NULL do not match. IsNullPredicate supplies explicit IS NULL and IS NOT NULL behavior.
-- Projection accepts 1–256 columns, resolves names case-insensitively, rejects duplicate names, preserves the requested order, and emits fresh output Tuple objects.
-
-Phase 6 deliberately does not implement joins, aggregates, sorting, GROUP BY, DISTINCT, LIMIT/OFFSET, SQL parsing, optimization, indexes, mutation operators, or transactions.
-
-## Phase 7: query planning
-
-The planning package converts already-resolved query intent into reusable descriptions of Phase 6 execution trees:
-
-~~~text
-Resolved query intent
-  ↓
-QueryRequest
-  ↓
-Planner
-  ↓
-Plan tree
-  ↓
-Phase 6 operator tree
-  ↓
-Table
-  ↓
-Storage
-~~~
-
-Plans describe execution but do not execute it. They expose schema, are structurally immutable after construction, and each create_operator() call produces a fresh unopened operator tree.
-
-- **TableScanPlan** wraps a resolved Table, exposes exactly table.schema, borrows the table, and creates a fresh TableScan.
-- **FilterPlan** wraps a child Plan and an existing Phase 6 Predicate. It validates the predicate during construction, preserves child-schema identity, and creates a Filter around a fresh child operator tree.
-- **ProjectionPlan** wraps a child plan and 1–256 projected columns. It validates case-insensitive resolution, duplicate and missing columns during construction; preserves requested order; creates a new output Schema that reuses existing Column definitions; and creates a Projection around a fresh child operator tree.
-- **QueryRequest** holds a resolved Table, optional existing Predicate, and optional projection. It is immutable, normalizes projection sequences to tuples, distinguishes None (no projection) from an explicitly empty projection, and rejects the latter when planned.
-- **Planner** is deterministic, side-effect-free, and non-optimizing. It constructs exactly these shapes:
-
-~~~text
-TableScanPlan
-
-FilterPlan
-  └── TableScanPlan
-
-ProjectionPlan
-  └── TableScanPlan
-
-ProjectionPlan
-  └── FilterPlan
-        └── TableScanPlan
-~~~
-
-The public planning API is Plan, TableScanPlan, FilterPlan, ProjectionPlan, QueryRequest, Planner, and PlanningError.
-
-## Phase 8: minimal SQL SELECT frontend
-
-Phase 8 adds a narrow, dependency-downward frontend:
-
-~~~text
-SQL text
-  ↓
-Lexer → Parser → unresolved SQL AST → Binder
-  ↓
-QueryRequest → existing Planner → existing execution operators
-~~~
-
-The supported grammar is a single-table `SELECT` statement with either `*` or a comma-separated column list, an optional `WHERE` comparison against an integer, float, single-quoted string, or Boolean literal, and `IS NULL` / `IS NOT NULL`. Keywords and catalog/schema resolution are case-insensitive while identifier spelling is preserved. One optional trailing semicolon is allowed.
-
-The frontend supports Boolean WHERE composition through `AND`, `OR`, prefix `NOT`, and parentheses for predicate grouping; precedence is `NOT > AND > OR`. It also supports `ORDER BY` simple source columns with ASC/DESC and multiple ordering items, plus `LIMIT` and `LIMIT ... OFFSET ...`. Strata sorts NULL values last for ASC and first for DESC. Global aggregate-only SELECT lists support `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`; WHERE runs before aggregation and LIMIT runs after it. Single-table GROUP BY supports mixed, SELECT-order-preserving grouping columns and aggregate calls; grouped ORDER BY resolves only exposed output names, then LIMIT/OFFSET applies. Every ordinary selected column must appear in GROUP BY, and GROUP BY without aggregates is unsupported. Result schema names are valid generated identifiers such as `count_star` and `sum_age`; if a prefixed source name would exceed 64 characters, its source portion is deterministically truncated to fit. HAVING, JOIN + aggregation, aliases, DISTINCT aggregates, aggregate-call ordering such as `ORDER BY COUNT(*)`, and global aggregate ORDER BY remain unsupported. It intentionally does not provide general scalar expressions, SQL comments, multiple statements, or `StrataEngine.execute()` integration. Binding resolves only the table and translates SQL syntax to existing `QueryRequest` and predicate types; existing plans and predicates remain authoritative for column, duplicate-projection, literal-type, and ordering-column validation.
-
-Two-table INNER equality joins are supported with `JOIN` or `INNER JOIN`, actual table-name qualification, explicit projections, joined WHERE conditions, ORDER BY, and LIMIT/OFFSET. For example:
+For example:
 
 ```sql
-SELECT users.name, orders.total
-FROM users JOIN orders ON users.id = orders.user_id
-WHERE orders.total > 100
-ORDER BY orders.total DESC
+SELECT department, COUNT(*), AVG(salary)
+FROM employees
+WHERE active = TRUE
+GROUP BY department
+ORDER BY department
 LIMIT 10;
 ```
 
-Phase 12 deliberately supports exactly one join across two distinct tables. Aliases, self joins, SELECT * joins, aggregate joins, outer joins, and non-equality ON conditions remain unsupported.
+The SQL subset intentionally does not support HAVING, JOIN + aggregation, aliases, DISTINCT or DISTINCT aggregates, aggregate-call ordering such as `ORDER BY COUNT(*)`, global aggregate ORDER BY, multiple/chained joins, outer joins, non-equality JOIN conditions, or general scalar expressions.
 
 ## Repository structure
 
-~~~text
+```text
 Strata/
 ├── src/
 │   ├── strata_engine/
-│   │   ├── __init__.py
-│   │   ├── engine.py
-│   │   ├── storage/            # Pages, slotted pages, buffer pool, heap files
-│   │   ├── schema/             # Types, columns, schemas, tuples, serialization
-│   │   ├── catalog/            # Persistent catalog metadata and Table
-│   │   ├── execution/
-│   │   │   ├── operator.py
-│   │   │   ├── table_scan.py
-│   │   │   ├── filter.py
-│   │   │   ├── projection.py
-│   │   │   └── predicate.py
-│   │   └── planning/
-│   │       ├── plan.py
-│   │       ├── table_scan_plan.py
-│   │       ├── filter_plan.py
-│   │       ├── projection_plan.py
-│   │       ├── query_request.py
-│   │       └── planner.py
-│   └── strata_backend/
-│       ├── main.py             # FastAPI entry point and GET /health
-│       └── engine_adapter.py   # Backend-to-engine boundary
-├── tests/                      # Storage through planning and integration tests
-├── docs/                       # Architecture, development, and storage notes
-├── data/                       # Reserved runtime data directory
+│   │   ├── storage/       # pages, records, slotted pages, heap files, buffer pool
+│   │   ├── schema/        # types, columns, schemas, tuples, serialization
+│   │   ├── catalog/       # persistent catalog metadata and tables
+│   │   ├── execution/     # scans, predicates, filter, projection, sort, limit,
+│   │   │                  # aggregate, nested-loop join, join projection
+│   │   ├── planning/      # immutable plans, query intent, sorting, limits,
+│   │   │                  # aggregation, joins, and projection planning
+│   │   ├── sql/           # tokens, lexer, AST, parser, binder, SQL errors
+│   │   └── engine.py      # public engine facade
+│   └── strata_backend/    # FastAPI entry point and EngineAdapter
+├── tests/                 # storage through SQL and integration coverage
+├── docs/                  # architecture, development, and storage notes
+├── data/                  # reserved runtime data directory
 └── pyproject.toml
-~~~
+```
 
 ## Quick start
 
 Strata requires Python 3.10 or newer.
 
-~~~bash
-python --version
+```bash
 python -m venv .venv
-~~~
-
-Activate the virtual environment:
-
-~~~powershell
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-~~~
-
-~~~bash
-# Linux / macOS
-source .venv/bin/activate
-~~~
-
-Install the package and development dependencies:
-
-~~~bash
 python -m pip install -e ".[dev]"
-~~~
-
-Run the automated suite:
-
-~~~bash
 python -m pytest
-~~~
+```
 
-Start the development server:
+On Windows PowerShell, activate the virtual environment with:
 
-~~~bash
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Start the backend development server with:
+
+```bash
 python -m uvicorn strata_backend.main:app --reload --host 127.0.0.1 --port 8000
-~~~
-
-Verify the backend/engine boundary:
-
-~~~bash
-curl http://127.0.0.1:8000/health
-~~~
-
-~~~json
-{
-  "status": "ok",
-  "service": "strata_backend",
-  "engine": {
-    "name": "StrataEngine",
-    "status": "initialized",
-    "initialized": true,
-    "data_dir": null
-  }
-}
-~~~
+```
 
 ## Not yet implemented
 
-The engine and application are intentionally incomplete. The following are not implemented:
-
-- query optimizer, cost model, or statistics
-- HAVING, JOIN + aggregation, DISTINCT aggregates, aliases, subqueries, or advanced aggregate ordering features
-- secondary indexes
-- mutation planning or execution
-- transactions, concurrency control, WAL, or recovery
-- authentication or workspace/task domain backend features
-- frontend client
+- query optimizer, cost model, or statistics;
+- HAVING and JOIN + aggregation;
+- aliases, DISTINCT, DISTINCT aggregates, subqueries, and broader expression support;
+- multiple/chained joins, outer joins, and non-equality join conditions;
+- secondary indexes;
+- SQL mutation planning and execution;
+- transactions, concurrency control, write-ahead logging, or recovery;
+- application-domain backend features and a frontend client.
 
 ## Future work
 
-Future work is deliberately unnumbered until its sequencing is established. Likely areas include SQL parsing, richer execution (joins, aggregation, ordering, and limits), query optimization, indexes, mutation support, transactions and recovery, backend domain features, and a frontend client.
+Future work remains deliberately unnumbered until sequencing is selected. Likely directions include optimization and statistics, indexes, mutation operators, transactions and recovery, richer SQL composition such as HAVING and subqueries, broader join support, and the application backend and frontend.
