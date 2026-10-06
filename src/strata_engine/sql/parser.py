@@ -21,6 +21,7 @@ from strata_engine.sql.ast import (
     InsertStatement,
     ColumnDefinition,
     CreateTableStatement,
+    DeleteStatement,
     DropTableStatement,
     Statement,
 )
@@ -64,8 +65,10 @@ class Parser:
             statement = self._create_table_statement()
         elif self._peek().type == TokenType.DROP:
             statement = self._drop_table_statement()
+        elif self._peek().type == TokenType.DELETE:
+            statement = self._delete_statement()
         else:
-            self._raise_expected("SELECT, INSERT, CREATE, or DROP")
+            self._raise_expected("SELECT, INSERT, CREATE, DROP, or DELETE")
 
         self._match(TokenType.SEMICOLON)
         self._consume(TokenType.EOF, "end of statement")
@@ -155,6 +158,14 @@ class Parser:
         self._consume(TokenType.TABLE, "TABLE after DROP")
         table_name = self._consume(TokenType.IDENTIFIER, "table identifier").lexeme
         return DropTableStatement(table_name)
+
+    def _delete_statement(self) -> DeleteStatement:
+        """Parse one DELETE statement without its terminator."""
+        self._consume(TokenType.DELETE, "DELETE")
+        self._consume(TokenType.FROM, "FROM after DELETE")
+        table_name = self._consume(TokenType.IDENTIFIER, "table identifier").lexeme
+        where = self._predicate() if self._match(TokenType.WHERE) else None
+        return DeleteStatement(table_name, where)
 
     def _column_definition(self) -> ColumnDefinition:
         name = self._consume(TokenType.IDENTIFIER, "column identifier").lexeme

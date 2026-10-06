@@ -1,7 +1,7 @@
 """Binding from unresolved SQL syntax to existing Strata query requests."""
 
 from strata_engine.catalog import Catalog
-from strata_engine.commands import CreateTableCommand, DropTableCommand, InsertCommand
+from strata_engine.commands import CreateTableCommand, DeleteCommand, DropTableCommand, InsertCommand
 from strata_engine.execution import (
     AndPredicate,
     ComparisonPredicate,
@@ -31,6 +31,7 @@ from strata_engine.sql.ast import (
     SelectStatement,
     InsertStatement,
     CreateTableStatement,
+    DeleteStatement,
     DropTableStatement,
     Statement,
 )
@@ -46,7 +47,7 @@ class Binder:
             raise TypeError(f"Expected Catalog instance, got {type(catalog).__name__}.")
         self._catalog = catalog
 
-    def bind(self, statement: Statement) -> QueryRequest | InsertCommand | CreateTableCommand | DropTableCommand:
+    def bind(self, statement: Statement) -> QueryRequest | InsertCommand | CreateTableCommand | DropTableCommand | DeleteCommand:
         """Resolve one statement without planning, scanning, or closing borrowed resources."""
         if isinstance(statement, InsertStatement):
             return InsertCommand(self._catalog.get_table(statement.table_name), statement.values)
@@ -54,6 +55,14 @@ class Binder:
             return self._bind_create_table(statement)
         if isinstance(statement, DropTableStatement):
             return DropTableCommand(statement.table_name)
+        if isinstance(statement, DeleteStatement):
+            table = self._catalog.get_table(statement.table_name)
+            if statement.where is not None and _has_qualified_predicate(statement.where):
+                raise SQLBindingError("Qualified WHERE references require a JOIN.")
+            predicate = self._bind_predicate(statement.where) if statement.where is not None else None
+            if predicate is not None:
+                predicate.validate(table.schema)
+            return DeleteCommand(table, predicate)
         if not isinstance(statement, SelectStatement):
             raise TypeError(f"Expected supported SQL statement, got {type(statement).__name__}.")
 

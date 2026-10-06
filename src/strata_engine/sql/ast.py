@@ -203,4 +203,18 @@ class DropTableStatement:
             raise TypeError(f"table_name must be a str, got {type(self.table_name).__name__}.")
 
 
-Statement = SelectStatement | InsertStatement | CreateTableStatement | DropTableStatement
+@dataclass(frozen=True, slots=True)
+class DeleteStatement:
+    """One unresolved DELETE statement with an optional WHERE predicate."""
+
+    table_name: str
+    where: SQLPredicate | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table_name, str):
+            raise TypeError(f"table_name must be a str, got {type(self.table_name).__name__}.")
+        if self.where is not None and not isinstance(self.where, SQLPredicate):
+            raise TypeError("where must be a SQLPredicate or None.")
+
+
+Statement = SelectStatement | InsertStatement | CreateTableStatement | DropTableStatement | DeleteStatement

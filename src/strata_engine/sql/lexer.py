@@ -30,6 +30,7 @@ _KEYWORDS: dict[str, TokenType] = {
     "VALUES": TokenType.VALUES,
     "CREATE": TokenType.CREATE,
     "DROP": TokenType.DROP,
+    "DELETE": TokenType.DELETE,
     "TABLE": TokenType.TABLE,
     "INTEGER": TokenType.TYPE_INTEGER,
     "BIGINT": TokenType.TYPE_BIGINT,

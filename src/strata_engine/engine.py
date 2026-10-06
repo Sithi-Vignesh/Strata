@@ -9,8 +9,8 @@ from typing import Any, List, Optional, Union
 
 from strata_engine.catalog.catalog import Catalog
 from strata_engine.catalog.table import Table
-from strata_engine.commands import CreateTableCommand, DropTableCommand, InsertCommand
-from strata_engine.execution import Aggregate, Filter, IndexScan, Limit, Projection, Sort, TableScan
+from strata_engine.commands import CreateTableCommand, DeleteCommand, DropTableCommand, InsertCommand
+from strata_engine.execution import Aggregate, Filter, IndexScan, Limit, MutationTargetScan, Projection, Sort, TableScan
 from strata_engine.planning import (
     AggregatePlan,
     FilterPlan,
@@ -203,6 +203,8 @@ class StrataEngine:
         if isinstance(bound, DropTableCommand):
             self.drop_table(bound.table_name)
             return CommandResult(affected_rows=0)
+        if isinstance(bound, DeleteCommand):
+            return _execute_delete(bound)
         raise TypeError(f"Unsupported bound statement type {type(bound).__name__}.")
 
     def execute_profiled(self, sql: str) -> ProfiledExecutionResult:
@@ -231,6 +233,8 @@ class StrataEngine:
         if isinstance(bound, DropTableCommand):
             self.drop_table(bound.table_name)
             return ProfiledExecutionResult(CommandResult(affected_rows=0), None)
+        if isinstance(bound, DeleteCommand):
+            return ProfiledExecutionResult(_execute_delete(bound), None)
         raise TypeError(f"Unsupported bound statement type {type(bound).__name__}.")
 
     def __enter__(self) -> "StrataEngine":
@@ -246,6 +250,16 @@ class StrataEngine:
 
 _SINGLE_TABLE_PLANS = (FilterPlan, ProjectionPlan, SortPlan, LimitPlan, AggregatePlan)
 _SINGLE_TABLE_OPERATORS = (Filter, Projection, Sort, Limit, Aggregate)
+
+
+def _execute_delete(command: DeleteCommand) -> CommandResult:
+    """Delete a materialized mutation-target snapshot through the Table API."""
+    targets = MutationTargetScan(command.table, command.predicate).collect()
+    affected_rows = 0
+    for record_id, _row in targets:
+        command.table.delete(record_id)
+        affected_rows += 1
+    return CommandResult(affected_rows=affected_rows)
 
 
 def _compose_query_profile(plan: object, operator: object) -> QueryProfile:

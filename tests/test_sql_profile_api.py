@@ -79,6 +79,13 @@ def test_profile_api_errors_commands_cors_and_lifecycle(tmp_path) -> None:
         assert command.status_code == 200
         assert command.json() == {"kind": "command", "affected_rows": 1, "profile": None}
 
+        deleted = client.post(
+            "/api/sql/profile",
+            json={"sql": "DELETE FROM tasks WHERE id = 1"},
+        )
+        assert deleted.status_code == 200
+        assert deleted.json() == {"kind": "command", "affected_rows": 1, "profile": None}
+
         cors = client.options(
             "/api/sql/profile",
             headers={"Origin": "http://ui.test", "Access-Control-Request-Method": "POST"},

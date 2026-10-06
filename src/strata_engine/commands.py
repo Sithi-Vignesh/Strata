@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from strata_engine.catalog import Table
+from strata_engine.execution import Predicate
 from strata_engine.schema import Schema
 
 
@@ -43,3 +44,20 @@ class DropTableCommand:
     def __post_init__(self) -> None:
         if not isinstance(self.table_name, str):
             raise TypeError(f"Expected table name str, got {type(self.table_name).__name__}.")
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteCommand:
+    """Resolved DELETE target and optional bound predicate."""
+
+    table: Table
+    predicate: Predicate | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table, Table):
+            raise TypeError(f"Expected Table instance, got {type(self.table).__name__}.")
+        if self.predicate is not None and not isinstance(self.predicate, Predicate):
+            raise TypeError(
+                "Expected Predicate instance or None for predicate, "
+                f"got {type(self.predicate).__name__}."
+            )

@@ -19,6 +19,7 @@ from strata_engine.sql.ast import (
     InsertStatement,
     ColumnDefinition,
     CreateTableStatement,
+    DeleteStatement,
     DropTableStatement,
     Statement,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "InsertStatement",
     "ColumnDefinition",
     "CreateTableStatement",
+    "DeleteStatement",
     "DropTableStatement",
     "Statement",
     "Parser",
