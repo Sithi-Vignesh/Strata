@@ -14,7 +14,15 @@ from strata_engine.catalog import (
     TableNotFoundError,
 )
 from strata_engine.engine import StrataEngine
-from strata_engine.result import CommandResult, QueryResult
+from strata_engine.result import (
+    CommandResult,
+    IndexCondition,
+    IndexScanMetrics,
+    ProfiledExecutionResult,
+    QueryProfile,
+    QueryResult,
+    TableScanMetrics,
+)
 from strata_engine.exceptions import StrataError
 from strata_engine.planning import (
     AmbiguousColumnError, ColumnRef, JoinCondition, JoinPlan, JoinSpec,
@@ -114,7 +122,8 @@ from strata_engine.storage import (
 
 __all__ = [
     # Engine
-    "StrataEngine", "QueryResult", "CommandResult",
+    "StrataEngine", "QueryResult", "CommandResult", "ProfiledExecutionResult",
+    "QueryProfile", "IndexCondition", "TableScanMetrics", "IndexScanMetrics",
     "StrataError",
     # Planning
     "PlanningError",

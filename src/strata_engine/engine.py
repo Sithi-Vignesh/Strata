@@ -10,9 +10,27 @@ from typing import Any, List, Optional, Union
 from strata_engine.catalog.catalog import Catalog
 from strata_engine.catalog.table import Table
 from strata_engine.commands import CreateTableCommand, DropTableCommand, InsertCommand
-from strata_engine.planning import Planner
+from strata_engine.execution import Aggregate, Filter, IndexScan, Limit, Projection, Sort, TableScan
+from strata_engine.planning import (
+    AggregatePlan,
+    FilterPlan,
+    IndexScanPlan,
+    LimitPlan,
+    Planner,
+    ProjectionPlan,
+    SortPlan,
+    TableScanPlan,
+)
 from strata_engine.planning import QueryRequest
-from strata_engine.result import CommandResult, QueryResult
+from strata_engine.result import (
+    CommandResult,
+    IndexCondition,
+    IndexScanMetrics,
+    ProfiledExecutionResult,
+    QueryProfile,
+    QueryResult,
+    TableScanMetrics,
+)
 from strata_engine.schema.schema import Schema
 from strata_engine.sql import Binder, Lexer, Parser
 from strata_engine.storage.exceptions import StorageClosedError
@@ -187,6 +205,34 @@ class StrataEngine:
             return CommandResult(affected_rows=0)
         raise TypeError(f"Unsupported bound statement type {type(bound).__name__}.")
 
+    def execute_profiled(self, sql: str) -> ProfiledExecutionResult:
+        """Execute SQL once and attach actual scan metadata when it is singular.
+
+        Normal commands and joins return their ordinary result with no profile,
+        because they do not have one eligible single-table access path.
+        """
+        statement = Parser(Lexer(sql).tokenize()).parse()
+        bound = Binder(self.catalog).bind(statement)
+        if isinstance(bound, QueryRequest):
+            plan = Planner().plan(bound)
+            operator = plan.create_operator()
+            schema = operator.schema
+            with operator:
+                rows = tuple(operator)
+            result = QueryResult(schema=schema, rows=rows)
+            profile = None if bound.join is not None else _compose_query_profile(plan, operator)
+            return ProfiledExecutionResult(result, profile)
+        if isinstance(bound, InsertCommand):
+            bound.table.insert(bound.values)
+            return ProfiledExecutionResult(CommandResult(affected_rows=1), None)
+        if isinstance(bound, CreateTableCommand):
+            self.create_table(bound.table_name, bound.schema)
+            return ProfiledExecutionResult(CommandResult(affected_rows=0), None)
+        if isinstance(bound, DropTableCommand):
+            self.drop_table(bound.table_name)
+            return ProfiledExecutionResult(CommandResult(affected_rows=0), None)
+        raise TypeError(f"Unsupported bound statement type {type(bound).__name__}.")
+
     def __enter__(self) -> "StrataEngine":
         return self.open()
 
@@ -196,3 +242,52 @@ class StrataEngine:
     def __repr__(self) -> str:
         status_str = "open" if self.is_open else "closed"
         return f"StrataEngine(data_dir='{self._data_dir}', status='{status_str}')"
+
+
+_SINGLE_TABLE_PLANS = (FilterPlan, ProjectionPlan, SortPlan, LimitPlan, AggregatePlan)
+_SINGLE_TABLE_OPERATORS = (Filter, Projection, Sort, Limit, Aggregate)
+
+
+def _compose_query_profile(plan: object, operator: object) -> QueryProfile:
+    """Compose one profile from matching single-table plan and operator trees."""
+    base_plan = _base_plan(plan)
+    base_operator = _base_operator(operator)
+    if isinstance(base_plan, TableScanPlan) and isinstance(base_operator, TableScan):
+        return QueryProfile(
+            access_path="TableScan",
+            table_name=base_plan.table.name,
+            index_name=None,
+            condition=None,
+            metrics=TableScanMetrics(base_operator.tuples_examined),
+        )
+    if isinstance(base_plan, IndexScanPlan) and isinstance(base_operator, IndexScan):
+        column_name = base_plan.table.schema[base_plan.index.column_ordinal].name
+        return QueryProfile(
+            access_path="IndexScan",
+            table_name=base_plan.table.name,
+            index_name=base_plan.index.name,
+            condition=IndexCondition(column_name, base_plan.op, base_plan.literal),
+            metrics=IndexScanMetrics(
+                base_operator.tree_pages_visited,
+                base_operator.leaf_entries_examined,
+                base_operator.rids_selected,
+                base_operator.rows_fetched,
+            ),
+        )
+    raise TypeError("Profiled single-table query has no matching scan plan and operator.")
+
+
+def _base_plan(plan: object) -> object:
+    """Follow approved unary plan wrappers to their single-table access plan."""
+    current = plan
+    while isinstance(current, _SINGLE_TABLE_PLANS):
+        current = current.child
+    return current
+
+
+def _base_operator(operator: object) -> object:
+    """Follow approved unary execution wrappers to their scan operator."""
+    current = operator
+    while isinstance(current, _SINGLE_TABLE_OPERATORS):
+        current = current.child
+    return current
