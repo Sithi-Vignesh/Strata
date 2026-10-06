@@ -8,7 +8,7 @@ from strata_engine.schema.serializer import TupleSerializer
 from strata_engine.schema.tuple import Tuple
 from strata_engine.catalog.index import TableIndex
 from strata_engine.catalog.exceptions import CatalogCorruptionError
-from strata_engine.storage.exceptions import StorageClosedError
+from strata_engine.storage.exceptions import InsufficientSpaceError, StorageClosedError
 from strata_engine.storage.heap_file import HeapFile
 from strata_engine.storage.record_id import RecordId
 
@@ -241,6 +241,113 @@ class Table:
                     pass
             raise
 
+    def update(self, record_id: RecordId, row: Tuple) -> RecordId:
+        """Replace one row, preserving its RID when its source page can hold it.
+
+        A valid replacement that cannot fit its existing page is relocated by
+        this table layer.  Attached indexes are transitioned to the final RID.
+        """
+        self._check_not_closed()
+        if not isinstance(record_id, RecordId):
+            raise TypeError(f"Expected RecordId instance, got {type(record_id).__name__}.")
+        if not isinstance(row, Tuple):
+            raise TypeError(f"Expected Tuple instance, got {type(row).__name__}.")
+        if row.schema is not None and row.schema.fingerprint != self._schema.fingerprint:
+            raise SchemaMismatchError(
+                f"Cannot update Table '{self._name}' with Tuple schema fingerprint "
+                f"0x{row.schema.fingerprint:08X}; expected 0x{self._schema.fingerprint:08X}."
+            )
+
+        old_row = self.get(record_id)
+        old_data = self._serializer.serialize(old_row.values)
+        new_data = self._serializer.serialize(row.values)
+        old_keys = self._index_keys(old_row)
+        new_keys = self._index_keys(row)
+
+        try:
+            self._heap_file.update_record(record_id, new_data)
+        except InsufficientSpaceError:
+            return self._relocate_update(record_id, new_data, old_keys, new_keys)
+
+        actions: list[tuple[str, TableIndex, Any, RecordId]] = []
+        try:
+            for index, old_key in old_keys:
+                new_key = _key_for_index(new_keys, index)
+                if old_key == new_key:
+                    continue
+                if old_key is not None:
+                    self._remove_index_entry(index, old_key, record_id)
+                    actions.append(("removed", index, old_key, record_id))
+                if new_key is not None:
+                    self._add_index_entry(index, new_key, record_id)
+                    actions.append(("added", index, new_key, record_id))
+        except Exception:
+            try:
+                self._heap_file.update_record(record_id, old_data)
+            except Exception:
+                pass
+            self._undo_index_actions(actions)
+            raise
+        return record_id
+
+    def _relocate_update(
+        self,
+        old_rid: RecordId,
+        new_data: bytes,
+        old_keys: list[tuple[TableIndex, Any]],
+        new_keys: list[tuple[TableIndex, Any]],
+    ) -> RecordId:
+        """Relocate a replacement after same-page capacity is exhausted."""
+        new_rid = self._heap_file.insert_record(new_data)
+        actions: list[tuple[str, TableIndex, Any, RecordId]] = []
+        try:
+            # Retain old entries until every new entry exists, minimizing data loss.
+            for index, new_key in new_keys:
+                if new_key is not None:
+                    self._add_index_entry(index, new_key, new_rid)
+                    actions.append(("added", index, new_key, new_rid))
+            for index, old_key in old_keys:
+                if old_key is not None:
+                    self._remove_index_entry(index, old_key, old_rid)
+                    actions.append(("removed", index, old_key, old_rid))
+            self._heap_file.delete_record(old_rid)
+        except Exception:
+            self._undo_index_actions(actions)
+            try:
+                self._heap_file.delete_record(new_rid)
+            except Exception:
+                pass
+            raise
+        return new_rid
+
+    def _index_keys(self, row: Tuple) -> list[tuple[TableIndex, Any]]:
+        return [(index, row[index.column_ordinal]) for index in self._indexes]
+
+    @staticmethod
+    def _add_index_entry(index: TableIndex, key: Any, record_id: RecordId) -> None:
+        if not index.tree.insert(key, record_id):
+            raise CatalogCorruptionError(
+                f"Index '{index.name}' already contains entry for record {record_id}."
+            )
+
+    @staticmethod
+    def _remove_index_entry(index: TableIndex, key: Any, record_id: RecordId) -> None:
+        if not index.tree.delete(key, record_id):
+            raise CatalogCorruptionError(
+                f"Index '{index.name}' lacks expected entry for record {record_id}."
+            )
+
+    @staticmethod
+    def _undo_index_actions(actions: list[tuple[str, TableIndex, Any, RecordId]]) -> None:
+        for action, index, key, record_id in reversed(actions):
+            try:
+                if action == "added":
+                    index.tree.delete(key, record_id)
+                else:
+                    index.tree.insert(key, record_id)
+            except Exception:
+                pass
+
     def scan(self) -> Iterator[PyTuple[RecordId, Tuple]]:
         """Iterate over all active typed records in the table.
 
@@ -287,3 +394,7 @@ class Table:
     def __repr__(self) -> str:
         status = "closed" if self.is_closed else "open"
         return f"Table(id={self._table_id}, name='{self._name}', status='{status}')"
+
+
+def _key_for_index(keys: list[tuple[TableIndex, Any]], target: TableIndex) -> Any:
+    return next(key for index, key in keys if index is target)
