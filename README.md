@@ -1,211 +1,241 @@
 # Strata
 
-> **Strata: A Collaborative Project Management System Powered by a Relational Database Engine Built from Scratch**
+> A collaborative project-management system powered by a relational database engine built from scratch.
 
-Strata is a database-systems project in which a realistic project-management application is the workload and the custom relational DBMS is the technical innovation. It consists of a relational engine written from scratch in Python, a FastAPI bridge that exposes the engine to the application, and a React/TypeScript frontend for a deterministic DBthon task-management workload. It uses no external database engine or ORM.
+Strata combines a custom persistent relational engine in Python with a FastAPI bridge and a React/TypeScript interface. The engine is substantial infrastructure and a major technical foundation; the long-term product is a collaborative workspace for projects, tasks, and notes.
 
-## Status
+Today, Strata provides a working engine, deterministic task-management demo, SQL/profile interface, and limited read-oriented workspace views. It is not yet a complete collaborative product.
 
-The DBthon demo scope is complete and feature-frozen: custom relational storage and SQL execution, persistent B+ Tree indexing, rule-based index-aware execution, Execution Profile metrics, a FastAPI bridge, SQL-backed product pages, SQL Console, and Engine architecture reveal.
+## Project status
 
-The application is the workload; the custom DBMS is the innovation. Overview, Tasks, and Board establish the project-management workload; SQL Console exposes direct engine execution and real TableScan/IndexScan work; Engine explains the implemented DBMS architecture.
+Current capabilities include:
 
-### Completed phase history
+- a custom page-backed relational engine with typed tuples, a persistent catalog, and B+ tree secondary indexes;
+- a constrained SQL frontend supporting `CREATE TABLE`, `DROP TABLE`, `INSERT`, `SELECT`, `UPDATE`, and `DELETE`;
+- FastAPI integration, including SQL execution profiling;
+- a React demo interface for overview, task, board, SQL-console, and engine-explanation views.
 
-| Phase | Delivered capability |
-| --- | --- |
-| 0 - Repository Foundation | Source layout, `StrataEngine`, backend adapter, and FastAPI health check. |
-| 1 - Core Storage | Fixed-size pages, `PageId`, and disk-backed page-file I/O. |
-| 2 - Record IDs and Slotted Pages | Stable `RecordId` values, slotted-page records, deletion, and compaction. |
-| 3 - Buffer Pool Manager | Bounded in-memory page cache, pin tracking, dirty write-back, and CLOCK replacement. |
-| 4 - Heap File | Multi-page, variable-length record storage over slotted pages. |
-| 5 - Schema, Tuple Serialization, Catalog, and Table | Typed relational rows, persistent metadata, and table operations. |
-| 6 - Query Execution | Volcano-style `TableScan`, `Filter`, and `Projection` operators. |
-| 7 - Query Planning | Immutable reusable plan trees that construct fresh operator trees. |
-| 8 - Minimal SQL SELECT Frontend + Binding | Read-only SQL syntax, parsing, and binding to query intent. |
-| 9 - Compound Predicate Expressions | `AND`, `OR`, `NOT`, parentheses, and conventional precedence. |
-| 10 - ORDER BY + LIMIT/OFFSET | Stable in-memory ordering and streaming pagination. |
-| 11 - Global Aggregation | `COUNT`, `SUM`, `AVG`, `MIN`, and `MAX`. |
-| 12 - Two-table INNER JOIN | One equality join with qualified references, filtering, ordering, and pagination. |
-| 13 - GROUP BY / Grouped Aggregation | Grouped aggregation, output ordering, and pagination. |
-| 14 - Two-table INNER JOIN + Aggregation | Global and grouped aggregation over one equality join. |
-| 15 - Engine SQL Integration | Public `StrataEngine.execute()` returning materialized `QueryResult` values. |
-| 16 - Minimal SQL INSERT | One ordered literal row through the typed table path. |
-| 17 - Minimal SQL CREATE TABLE | Persistent table creation through SQL. |
-| 18 - Minimal SQL DROP TABLE | Persistent table deletion through SQL. |
-| 19 - Persistent B+ Tree Core | Durable typed B+ trees, splits, leaf links, range scans, and traversal metrics. |
-| 20 - Index Lifecycle & Table Integration | Catalog-backed single-column indexes, backfill, row-level maintenance, reopen, and table-drop cleanup. |
-| 21A - Index-Aware Query Execution | Rule-based selection of `IndexScan` for eligible single-table predicates. |
-| 21B.1 - Query Execution Profiling | Actual scan-work instrumentation through `execute_profiled()`. |
-| 21B.2 - DBthon FastAPI Bridge | Profile API, deterministic task bootstrap, CORS, and safe health endpoint. |
-| UI-1 - Frontend Foundation & Backend Integration | React/Vite foundation, routing, typed client, Vite proxy, health check, and frontend tests. |
-| UI-2 to UI-6 - Product, SQL Console, Profiles, and Engine Reveal | Application shell, SQL-backed workload views, SQL Console, Execution Profile, and static engine architecture reveal. |
+The current frontend pages use real engine data, but they are primarily demo/read-oriented. Product CRUD APIs, authentication, multi-user workflows, and collaboration are future work.
 
-## Current architecture
+## Why Strata
+
+Strata is built around a practical constraint: the application should determine what the database needs next. The project-management workload drives the engine roadmap instead of treating database features as isolated exercises.
+
+## Architecture
+
+### SELECT path
 
 ```text
-React / TypeScript frontend
-        ↓ HTTP
-FastAPI bridge / EngineAdapter
-        ↓
-Strata custom relational engine
-        ↓
-SQL frontend → Binder → Planner → Execution → Storage
+SQL text
+  -> Lexer
+  -> Parser
+  -> unresolved immutable AST
+  -> Binder
+  -> QueryRequest
+  -> deterministic Planner
+  -> Physical Plan
+  -> Volcano-style execution operators
+  -> QueryResult
 ```
 
-The SQL frontend tokenizes and parses one supported statement into an unresolved syntax tree. The Binder resolves it against the catalog, the deterministic planner builds physical operators, and execution reaches page-backed storage. Persistent secondary B+ Tree indexes are part of the engine's catalog/storage architecture and can support eligible `IndexScan` access paths.
+### Mutation path
 
-## Index-aware execution
+```text
+UPDATE / DELETE
+  -> Lexer / Parser / AST
+  -> Binder
+  -> mutation command
+  -> MutationTargetScan
+  -> RID-aware fixed target snapshot
+  -> Table mutation
+  -> heap and index maintenance
+```
 
-Strata has catalog-backed, persistent, single-column, non-unique B+ tree indexes. Supported index key types are `INTEGER`, `BIGINT`, `BOOLEAN`, and `VARCHAR`; `FLOAT` index keys are unsupported. Existing rows are backfilled, `NULL` keys are skipped, inserts and deletes maintain index entries, metadata and files survive reopen, and dropping a table removes its owned index files.
+`SELECT` uses the planner. `UPDATE` and `DELETE` deliberately use a table-scan mutation target snapshot rather than normal query planning, so target selection completes before mutation begins.
 
-The planner now performs **rule-based index-aware planning** for eligible single-table comparisons: `=`, `<`, `<=`, `>`, and `>=`. It deterministically chooses an eligible index and retains the original filter above `IndexScan` for correctness. Non-eligible predicates fall back to `TableScan`; joins continue to use `TableScan` inputs.
+## Database engine
 
-This is not a cost-based optimizer. There is currently no multi-index intersection, index-only scan, index nested-loop join, or `ORDER BY` elimination through index ordering. SQL `CREATE INDEX` and `DROP INDEX` are not implemented.
+### SQL frontend and commands
 
-## Query execution profiling
+The engine has a handwritten lexer, recursive-descent parser, immutable unresolved AST, and binder/semantic-resolution layer. Identifiers are case-insensitive. The supported statement families are deliberately narrow:
 
-`StrataEngine.execute_profiled()` runs supported SQL once and returns ordinary query or command output together with an optional **Execution Profile**. `execute()` retains its normal semantics.
+- `CREATE TABLE` and `DROP TABLE`;
+- one-row, literal `INSERT` in schema order;
+- `SELECT`;
+- `UPDATE` with literal assignments;
+- `DELETE`.
 
-Profiles describe actual executed scan work, not optimizer cost estimates, benchmark timings, or page-I/O accounting:
+This is not a general SQL implementation. SQL `CREATE INDEX` and `DROP INDEX` are not available; indexes are created through the engine API.
+
+### Query planning and execution
+
+The planner is deterministic and rule-based, not cost-based. It has no statistics, cardinality estimation, cost model, adaptive behavior, or sophisticated join ordering.
+
+Execution uses a Volcano-style `open()`, `next()`, `close()` lifecycle. Current operators include `TableScan`, `IndexScan`, `Filter`, `Projection`, `Sort`, `Limit`, `Aggregate`, `NestedLoopJoin`, and `JoinProjection`.
+
+For eligible single-table comparisons (`=`, `<`, `<=`, `>`, `>=`), the planner may select the first eligible indexed comparison in a left-to-right `AND` traversal and retain the complete filter for correctness. `OR`, `NOT`, NULL tests, unindexed predicates, and joins remain table-scan paths. Joins are limited to exactly two tables and an equality `JOIN`/`INNER JOIN`; they use nested loops.
+
+### SELECT capabilities
+
+`SELECT` supports:
+
+- `*` or explicit projection;
+- comparisons, `AND`, `OR`, `NOT`, parentheses, `IS NULL`, and `IS NOT NULL` predicates;
+- `ORDER BY` with ASC/DESC, `LIMIT`, and `OFFSET`;
+- global and grouped aggregation: `COUNT`, `SUM`, `AVG`, `MIN`, and `MAX`;
+- `GROUP BY` with the engine's aggregate restrictions;
+- one equality two-table `JOIN` / `INNER JOIN`.
+
+### Storage
+
+The storage subsystem provides persistent, page-backed storage with 4096-byte pages, disk page files, a bounded buffer pool with CLOCK replacement, slotted pages, heap files, `RecordId` (RID) addressing, typed tuple serialization, and persistent catalog metadata.
+
+`SlottedPage.update_record(...)` and `HeapFile.update_record(...)` provide same-page physical replacement. A successful replacement preserves the slot/RID, supports shrinking or growing records where capacity permits, and rebuilds/compacts the page while preserving live slot IDs. If the source page cannot hold the replacement, it fails atomically with `InsufficientSpaceError`.
+
+At the relational layer, `Table.update(record_id, row) -> RecordId` validates the replacement, first attempts same-page replacement, and relocates only when the source page lacks capacity. It returns the final live RID, maintains all attached indexes (including NULL transitions and multiple indexes), and performs best-effort row-local compensation when a row update fails. This is not transactional statement processing.
+
+### Indexing
+
+Strata has persistent, page-backed B+ tree secondary indexes integrated with catalog metadata. Existing rows are backfilled; `INSERT`, `UPDATE`, and `DELETE` maintain index entries; and index files and metadata survive reopening the database.
+
+Supported indexed key types are `INTEGER`, `BIGINT`, `BOOLEAN`, and `VARCHAR`. `FLOAT` indexing is unsupported and NULL keys are skipped. The tree supports point and range access for `IndexScan`, but does not currently provide full delete rebalancing/page reclamation, index-only scans, multi-index intersection, index nested-loop joins, or `ORDER BY` elimination through index ordering.
+
+### Mutations
+
+`DELETE` supports:
+
+```sql
+DELETE FROM table_name [WHERE predicate];
+```
+
+Its path is `DeleteStatement -> Binder -> DeleteCommand -> MutationTargetScan -> fixed RID-aware target snapshot -> Table.delete()`.
+
+`UPDATE` supports literal-only assignments:
+
+```sql
+UPDATE table_name
+SET column_name = literal [, column_name = literal ...]
+[WHERE predicate];
+```
+
+Supported assignment literals are integers, floats, strings, `TRUE`, `FALSE`, and `NULL`. The path is `UpdateStatement -> Binder -> UpdateCommand -> MutationTargetScan -> fixed RID-aware snapshot -> prebuild and validate every replacement tuple -> Table.update()`.
+
+`UPDATE` does not support expressions, column-reference RHS values, arithmetic, functions, subqueries, `UPDATE FROM`, joins, `RETURNING`, `ORDER BY`, or `LIMIT`. Assignment targets are resolved once by the binder, duplicate targets are rejected case-insensitively, and all replacement rows are built and validated before the first target row changes. SQL never manipulates B+ trees directly; index behavior belongs to `Table.update()`.
+
+### Profiling
+
+`StrataEngine.execute_profiled(...)` runs a statement once and returns its ordinary result plus an optional observational query profile. Normal `execute()` behavior is unchanged.
+
+Profiles report actual logical scan work, not `EXPLAIN`, cost estimates, disk I/O, page-read counts, or timing benchmarks:
 
 | Access path | Metrics |
 | --- | --- |
 | `TableScan` | `tuples_examined` |
 | `IndexScan` | `tree_pages_visited`, `leaf_entries_examined`, `rids_selected`, `rows_fetched` |
 
-Candidate/index work can differ from the final returned-row count, and `LIMIT` can stop operator consumption early. Commands return `profile: null`. Joined queries also return `profile: null` rather than implying a misleading single access path. This capability reports execution/access metrics rather than a general plan viewer.
+Command statements (`INSERT`, `UPDATE`, `DELETE`, and DDL) naturally return no query scan profile. Joined queries also have no single-path profile.
 
-## DBthon FastAPI bridge
-
-The FastAPI application owns engine lifecycle, bootstraps the demo dataset on startup, and reaches the database only through `EngineAdapter`.
-
-- `GET /health` returns safe service and engine status fields.
-- `POST /api/sql/profile` accepts one SQL statement:
-
-```json
-{ "sql": "SELECT id FROM tasks WHERE status = 'BLOCKED'" }
-```
-
-A query response includes `kind`, `columns`, `rows`, `row_count`, and `profile`. A command response includes `kind`, `affected_rows`, and `"profile": null`. Client SQL/domain errors are returned as structured HTTP 400 responses; unexpected server failures use a safe HTTP 500 response.
-
-`STRATA_DATA_DIR` overrides the backend data directory (default: `data/dbthon_demo`). `STRATA_FRONTEND_ORIGIN` overrides the allowed frontend origin (default: `http://localhost:5173`). Frontend development normally uses the Vite proxy, so browser code calls relative `/health` and `/api/...` paths.
-
-## Deterministic DBthon dataset
-
-Bootstrap creates the `tasks` table with 1,000 deterministic rows and ensures the required `tasks_status_idx` index on `tasks.status`. It is reopen-safe: an existing demo database is reused and the required index is checked.
-
-| Column | Type |
-| --- | --- |
-| `id` | `INTEGER NOT NULL` |
-| `title` | `VARCHAR(96) NOT NULL` |
-| `status` | `VARCHAR(16) NOT NULL` |
-| `priority` | `VARCHAR(16) NOT NULL` |
-| `assignee` | `VARCHAR(32) NULL` |
-| `project` | `VARCHAR(32) NOT NULL` |
-
-Status distribution: `TODO`, `IN_PROGRESS`, `REVIEW`, `BLOCKED`, and `DONE` each have 200 rows. Priority distribution: `LOW`, `URGENT`, `HIGH`, and `MEDIUM` each have 250 rows. Projects (`Strata Engine`, `Website`, `Infrastructure`, `Mobile App`, and `Analytics`) each have 200 rows. `assignee` is `NULL` when `id % 11 == 0`; other rows use deterministic names.
-
-### TableScan and IndexScan demonstration
-
-The canonical unindexed demonstration query is:
+## Supported SQL examples
 
 ```sql
-SELECT id, title, status, priority
+CREATE TABLE example (
+  id INTEGER,
+  title VARCHAR(64),
+  active BOOLEAN
+);
+
+INSERT INTO example VALUES (1, 'Design the schema', TRUE);
+
+SELECT id, title
+FROM example
+WHERE active = TRUE
+ORDER BY id ASC
+LIMIT 20;
+
+UPDATE example
+SET title = 'Finalize schema', active = FALSE
+WHERE id = 1;
+
+DELETE FROM example
+WHERE id = 1;
+
+SELECT status, COUNT(*)
 FROM tasks
-WHERE priority = 'URGENT';
-```
+GROUP BY status
+ORDER BY status ASC;
 
-It returns 250 rows and uses `TableScan`; when fully consumed, it examines 1,000 tuples.
-
-The canonical indexed demonstration query is:
-
-```sql
-SELECT id, title, status, priority
+SELECT tasks.id, projects.name
 FROM tasks
-WHERE status = 'BLOCKED';
+INNER JOIN projects ON tasks.project_id = projects.id
+WHERE tasks.id = 42;
 ```
 
-It returns 200 rows and uses `IndexScan` through `tasks_status_idx`. SQL Console exposes current execution metrics at runtime; this README does not hardcode B+ Tree traversal values or claim benchmark speedups.
+The examples demonstrate accepted syntax, not broader SQL compatibility. SQL-created columns are non-nullable; `VARCHAR` declarations require a length.
 
-## Current SQL capability
+## Backend and demo database
 
-The SQL frontend supports a deliberately narrow subset:
+The FastAPI application owns engine lifecycle and accesses its shared engine through `EngineAdapter`, which serializes one profiled execution at a time. The adapter lock is not a transaction system.
 
-- single-table `SELECT` with `*` or explicit projection;
-- `WHERE` with comparisons, `AND`, `OR`, `NOT`, parentheses, `IS NULL`, and `IS NOT NULL`;
-- eligible indexed single-table predicates using `IndexScan`;
-- source-column `ORDER BY` with ASC/DESC and multiple items;
-- `LIMIT` and `LIMIT ... OFFSET ...`;
-- global aggregates: `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, `MAX`;
-- single-table `GROUP BY`, including mixed grouping/aggregate output and post-aggregate ordering;
-- exactly one two-table equality `JOIN` / `INNER JOIN`, including joined filtering, ordering, pagination, and global/grouped aggregation;
-- constrained one-row literal `INSERT`, minimal `CREATE TABLE`, and `DROP TABLE`.
+Available endpoints:
 
-For grouped queries, `WHERE` runs before aggregation, while `ORDER BY` and `LIMIT`/`OFFSET` run afterward. Ordinary selected columns must appear in `GROUP BY`; `GROUP BY` without aggregates is unsupported. `INSERT` accepts exactly one literal row in schema order and returns `CommandResult(affected_rows=1)`. SQL-created columns are non-nullable.
+- `GET /health` — service and engine status;
+- `POST /api/sql/profile` — execute one supported SQL statement and return result data plus an optional profile.
 
-## Frontend product surface
+The application starts with a deterministic demo database at `data/dbthon_demo` by default. `STRATA_DATA_DIR` can override its directory and `STRATA_FRONTEND_ORIGIN` can override the allowed frontend origin.
 
-The `frontend/` application uses React, TypeScript, Vite, Tailwind CSS v4, and React Router. It uses a typed HTTP client, Vite development proxying, a backend-health indicator, and focused frontend tests.
+Bootstrap creates/reuses a `tasks` table with 1,000 deterministic task rows and ensures `tasks_status_idx` on `tasks.status`. It is a reproducible workload for the frontend and SQL/profile demonstrations, not the future production workspace schema.
 
-| Page | Current behavior |
-| --- | --- |
-| Overview | SQL-backed status summary for the project-management workload. |
-| Tasks | SQL-backed deterministic task table. |
-| Board | SQL-backed task board grouped by status. |
-| SQL Console | Executes supported SQL, provides TableScan and IndexScan presets, renders generic results, and shows an Execution Profile. |
-| Engine | Static architecture reveal for SQL frontend, binding, planning, iterator execution, persistence, and B+ Tree indexing. |
-
-## Repository structure
-
-```text
-Strata/
-|- frontend/
-|  |- src/
-|  |  |- api/             # typed backend client
-|  |  |- app/             # router and application entry
-|  |  |- components/      # shared layout
-|  |  |- pages/           # product and database route surfaces
-|  |  `- types/           # API contract types
-|  |- package.json
-|  `- vite.config.ts
-|- src/
-|  |- strata_engine/      # custom relational engine
-|  `- strata_backend/     # FastAPI and EngineAdapter bridge
-|- tests/                 # Python engine/backend coverage
-|- docs/
-|- data/                  # runtime data directory
-`- pyproject.toml
-```
-
-## Quick start
-
-Strata requires Python 3.10 or newer. From the repository root:
-
-```bash
-python -m venv .venv
-```
-
-Activate the environment. On Windows PowerShell:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-Then install the project and development dependencies and run the Python tests:
-
-```bash
-python -m pip install -e ".[dev]"
-python -m pytest -q
-```
-
-Start the backend in one terminal:
+Start the backend from the repository root:
 
 ```bash
 python -m uvicorn strata_backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Start the frontend in another terminal:
+## Frontend
+
+`frontend/` uses React, TypeScript, Vite, Tailwind CSS, and React Router. Current routes are:
+
+| Route | Current behavior |
+| --- | --- |
+| `/` | SQL-backed task-status overview. |
+| `/tasks` | SQL-backed deterministic task table. |
+| `/board` | SQL-backed board grouped by status. |
+| `/sql` | Connected SQL Console with result rendering and execution profiles. |
+| `/engine` | Explanatory/static engine architecture page. |
+
+The frontend is not yet a full collaborative application: it has no authentication, workspace creation, project/task editing, assignments, notes CRUD, real-time collaboration, or complete product CRUD APIs.
+
+## Repository structure
+
+```text
+Strata/
+|- frontend/              # React/Vite demo interface
+|- src/
+|  |- strata_engine/      # custom relational engine
+|  `- strata_backend/     # FastAPI and EngineAdapter bridge
+|- tests/                 # Python engine/backend coverage
+|- docs/                  # deeper architecture and storage notes
+|- data/                  # runtime database directory
+`- pyproject.toml
+```
+
+## Running locally
+
+Strata requires Python 3.10 or newer.
+
+```bash
+python -m venv .venv
+python -m pip install -e ".[dev]"
+python -m pytest -q
+```
+
+On Windows PowerShell, activate with:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Start the frontend separately:
 
 ```bash
 cd frontend
@@ -213,48 +243,40 @@ npm install
 npm run dev
 ```
 
-Vite serves the frontend at `http://localhost:5173` and proxies `/health` and `/api/...` to the backend at `http://127.0.0.1:8000`.
+Vite serves `http://localhost:5173` and proxies `/health` and `/api/...` to the backend. Useful frontend checks are `npm run typecheck`, `npm run test`, and `npm run build`.
 
-Useful frontend validation commands:
+## Testing
+
+Run the Python suite with:
 
 ```bash
-npm run typecheck
-npm run test
-npm run build
+python -m pytest -q
 ```
 
-## Validation and quality
+Latest verified local regression for the current SQL UPDATE working tree: **647 tests passing**, with one known Starlette/httpx `TestClient` deprecation warning.
 
-Authoritative Python/backend validation on Python 3.12.10 reports **585 passed**, **0 failed**, and **1 known third-party deprecation warning** (`StarletteDeprecationWarning` involving FastAPI `TestClient` / httpx).
+## Current limitations
 
-Final DBthon frontend validation baseline reports:
+- SQL is intentionally constrained: one-row `VALUES`-only `INSERT`, literal-only `UPDATE` RHS, no `ALTER TABLE`, no SQL index DDL, no subqueries, aliases, `DISTINCT`, `HAVING`, or broad scalar expressions.
+- JOINs are exactly two-table equality inner joins; there are no outer joins, chained joins, hash joins, or merge joins.
+- Mutation target selection is currently table-scan based, even when an indexed predicate is available.
+- There is no transaction manager, statement rollback, `BEGIN`/`COMMIT`/`ROLLBACK`, locks/2PL, MVCC, deadlock detection, WAL, or crash recovery. An unexpected multi-row mutation failure can leave earlier rows modified.
+- Planning is rule-based, not cost-based; there are no statistics or advanced join optimization.
+- B+ tree indexing has the restrictions described above, including no index-only scans or multi-index intersection.
+- The product surface remains a demo-oriented frontend rather than a complete multi-user collaboration system.
 
-- 9 frontend test files / 41 tests passed;
-- `npm run typecheck` passed;
-- `npm run test` passed;
-- `npm run build` passed;
-- `npm ls` produced a valid dependency tree.
+## Roadmap
 
-The Python and frontend totals are separate validation baselines.
+The application determines which DBMS work matters next.
 
-## DBthon demo flow
-
-The application is the workload; the custom DBMS is the innovation. Show Overview, Tasks, and Board to establish the workload; use SQL Console to compare TableScan and IndexScan Execution Profiles; then use Engine to reveal the SQL-to-storage architecture and persistent B+ Tree indexing.
+1. **Phase A — application-critical SQL:** current `SELECT` / `INSERT` / `UPDATE` / `DELETE` foundation is complete.
+2. **Phase B — real Strata relational schema:** users, workspaces, workspace members, projects, tasks, and notes.
+3. **Phase C — product backend APIs:** workspace, project, task, and note CRUD.
+4. **Phase D — product UI rebuild:** workspace switching, project navigation, task creation/editing, board interaction, task detail, and notes.
+5. **Phase E — collaboration:** users, membership, assignment, and activity/collaboration behavior.
+6. **Phase F — transaction and concurrency work:** transaction boundaries, locking/2PL, and deadlock handling.
+7. **Phase G — differentiated database/product innovation.**
 
 ## Demo reset
 
-The runtime demo database is `data/dbthon_demo`. Restarting the backend reuses it. For a clean deterministic demo, stop the backend, delete `data/dbthon_demo`, then restart the backend; bootstrap recreates the 1,000-row tasks dataset and `tasks_status_idx`. This is a destructive reset.
-
-## Not yet implemented
-
-- cost-based or statistics-driven optimization;
-- SQL `CREATE INDEX` / `DROP INDEX`;
-- multi-index intersection, index-only scans, index nested-loop joins, or `ORDER BY` elimination through index ordering;
-- `HAVING`, aliases, `DISTINCT`, subqueries, or broader scalar expressions;
-- multiple/chained joins, outer joins, or non-equality joins;
-- transactions, concurrency control, locking/deadlock handling, WAL, or recovery;
-- a broad production CRUD API, authentication, comments, notifications, or realtime collaboration;
-
-## Historical notes
-
-Phase 5 introduced typed relational data, immutable schemas, binary tuple serialization, persistent catalog metadata, and tables. Phase 6 introduced the Volcano operator lifecycle; joins, aggregates, sorting, SQL parsing, and pagination arrived in later phases. Phase 7 introduced immutable reusable plan trees; current plans cover scans, filters, projections, sorting, limits, aggregation, joins, and index scans.
+The demo database is `data/dbthon_demo`. Restarting the backend reuses it. To reset it, stop the backend, delete that directory, and restart the backend so bootstrap recreates the deterministic dataset and status index. This is destructive.
