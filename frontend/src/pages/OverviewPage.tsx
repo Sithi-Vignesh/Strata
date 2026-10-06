@@ -1,12 +1,5 @@
-export function OverviewPage() {
-  return <PagePlaceholder title="Overview" />;
-}
+import { PageHeader } from "../components/layout/PageHeader";
 
-export function PagePlaceholder({ title }: { title: string }) {
-  return (
-    <section>
-      <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-      <p className="mt-2 text-slate-600">This screen is established for a future Strata phase.</p>
-    </section>
-  );
+export function OverviewPage() {
+  return <section className="max-w-6xl"><PageHeader description="Workspace activity and project progress at a glance." title="Overview" /></section>;
 }
