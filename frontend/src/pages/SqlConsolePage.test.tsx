@@ -41,7 +41,7 @@ describe("SqlConsolePage", () => {
       ],
       rows: [["Arbitrary value", true, null]],
       row_count: 1,
-      profile: null,
+      profile: { access_path: "TableScan", table: "items", index: null, condition: null, metrics: { tuples_examined: 9 } },
     });
     render(<SqlConsolePage />);
     fireEvent.change(screen.getByLabelText("SQL statement"), { target: { value: "  SELECT label FROM items  " } });
@@ -54,6 +54,8 @@ describe("SqlConsolePage", () => {
     expect(screen.getByText("true")).toBeInTheDocument();
     expect(screen.getByText("NULL")).toBeInTheDocument();
     expect(screen.getByText("1 row returned")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Execution Profile" })).toBeInTheDocument();
+    expect(screen.getAllByText("TableScan").length).toBeGreaterThan(0);
   });
 
   it("treats zero rows as a successful result", async () => {
@@ -62,6 +64,7 @@ describe("SqlConsolePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run query" }));
     expect(await screen.findByText("0 rows returned")).toBeInTheDocument();
     expect(screen.getByText("This query returned no rows.")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable for this query shape.")).toBeInTheDocument();
   });
 
   it("renders command outcomes with affected-row grammar", async () => {
@@ -70,6 +73,7 @@ describe("SqlConsolePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run query" }));
     expect(await screen.findByText("Command completed")).toBeInTheDocument();
     expect(screen.getByText("1 row affected.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Execution Profile" })).not.toBeInTheDocument();
   });
 
   it("renders backend SQL errors without exposing a traceback", async () => {
@@ -137,6 +141,41 @@ describe("SqlConsolePage", () => {
     rejectExecution!(new TypeError("Failed to fetch"));
     expect(await screen.findByRole("alert")).toHaveTextContent("Backend unavailable");
     expect(screen.getByText("2 rows affected.")).toBeInTheDocument();
+  });
+
+  it("labels retained query output as previous while edited, running, and after an error", async () => {
+    executeMock.mockResolvedValueOnce({
+      kind: "query", columns: [{ name: "id", type: "INTEGER", nullable: false }], rows: [[1]], row_count: 1,
+      profile: { access_path: "IndexScan", table: "tasks", index: "tasks_status_idx", condition: { column: "status", operator: "=", literal: "BLOCKED" }, metrics: { tree_pages_visited: 3, leaf_entries_examined: 201, rids_selected: 200, rows_fetched: 200 } },
+    });
+    render(<SqlConsolePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+    expect((await screen.findAllByText("tasks_status_idx")).length).toBeGreaterThan(0);
+
+    fireEvent.change(screen.getByLabelText("SQL statement"), { target: { value: "SELECT id FROM tasks" } });
+    expect(screen.getByText("Showing the previous successful execution.")).toBeInTheDocument();
+
+    let rejectExecution: (reason: unknown) => void;
+    executeMock.mockReturnValueOnce(new Promise((_, reject) => { rejectExecution = reject; }));
+    fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+    expect(screen.getByText("Showing the previous successful execution.")).toBeInTheDocument();
+    expect(screen.getAllByText("tasks_status_idx").length).toBeGreaterThan(0);
+    rejectExecution!(new TypeError("Failed to fetch"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Backend unavailable");
+    expect(screen.getByText("Showing the previous successful execution.")).toBeInTheDocument();
+  });
+
+  it("replaces the previous execution when a new query succeeds", async () => {
+    executeMock.mockResolvedValueOnce({ kind: "query", columns: [{ name: "id", type: "INTEGER", nullable: false }], rows: [[1]], row_count: 1, profile: { access_path: "TableScan", table: "first", index: null, condition: null, metrics: { tuples_examined: 1 } } });
+    executeMock.mockResolvedValueOnce({ kind: "query", columns: [{ name: "id", type: "INTEGER", nullable: false }], rows: [[2]], row_count: 1, profile: { access_path: "TableScan", table: "second", index: null, condition: null, metrics: { tuples_examined: 2 } } });
+    render(<SqlConsolePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+    expect((await screen.findAllByText("first")).length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByLabelText("SQL statement"), { target: { value: "SELECT id FROM second" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+    expect((await screen.findAllByText("second")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Showing the previous successful execution.")).not.toBeInTheDocument();
+    expect(screen.queryAllByText("first")).toHaveLength(0);
   });
 
   it("retries the current editor SQL", async () => {

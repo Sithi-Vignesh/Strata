@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { executeSqlProfile, StrataApiError } from "../api/strata";
+import { ExecutionProfile } from "../components/sql/ExecutionProfile";
 import { PageHeader } from "../components/layout/PageHeader";
 import type { SqlProfileResponse, SqlValue } from "../types/api";
 
@@ -17,9 +18,14 @@ interface ExecutionError {
   code?: string;
 }
 
+interface SuccessfulExecution {
+  sql: string;
+  response: SqlProfileResponse;
+}
+
 export function SqlConsolePage() {
   const [sql, setSql] = useState(TABLE_SCAN_SQL);
-  const [result, setResult] = useState<SqlProfileResponse | null>(null);
+  const [successfulExecution, setSuccessfulExecution] = useState<SuccessfulExecution | null>(null);
   const [executionError, setExecutionError] = useState<ExecutionError | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const mountedRef = useRef(true);
@@ -49,7 +55,7 @@ export function SqlConsolePage() {
     try {
       const response = await executeSqlProfile(trimmedSql);
       if (mountedRef.current) {
-        setResult(response);
+        setSuccessfulExecution({ sql: trimmedSql, response });
       }
     } catch (error) {
       if (mountedRef.current) {
@@ -76,6 +82,11 @@ export function SqlConsolePage() {
       setExecutionError(null);
     }
   };
+
+  const isPreviousExecution = successfulExecution !== null && (
+    isRunning || executionError !== null || sql.trim() !== successfulExecution.sql
+  );
+  const response = successfulExecution?.response;
 
   return (
     <section className="max-w-6xl">
@@ -128,8 +139,9 @@ export function SqlConsolePage() {
         <h2 className="sr-only" id="execution-output-heading">Execution output</h2>
         {isRunning && <p aria-live="polite" className="mb-4 text-sm text-[var(--strata-muted)]">Executing SQL…</p>}
         {executionError && <ExecutionErrorNotice error={executionError} isRunning={isRunning} onRetry={() => void runSql()} />}
-        {result?.kind === "query" && <QueryResults response={result} />}
-        {result?.kind === "command" && <CommandResult affectedRows={result.affected_rows} />}
+        {isPreviousExecution && <p className="mb-4 rounded-md border border-[var(--strata-border)] bg-slate-50 px-4 py-3 text-sm text-[var(--strata-muted)]">Showing the previous successful execution.</p>}
+        {response?.kind === "query" && <div className="space-y-6"><ExecutionProfile profile={response.profile} /><QueryResults response={response} /></div>}
+        {response?.kind === "command" && <CommandResult affectedRows={response.affected_rows} />}
       </section>
     </section>
   );
