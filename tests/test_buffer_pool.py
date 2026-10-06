@@ -33,6 +33,7 @@ from strata_engine.storage import (
     PageNotFoundError,
     SlottedPage,
     StorageClosedError,
+    StorageCorruptionError,
 )
 
 
@@ -307,6 +308,56 @@ def test_fetch_page_not_found(tmp_path: Path) -> None:
         bpm = BufferPoolManager(pf, pool_size=3)
         with pytest.raises(PageNotFoundError):
             bpm.fetch_page(999)
+
+
+def test_failed_read_returns_free_frame_to_pool(tmp_path: Path, monkeypatch) -> None:
+    """A disk-read failure must not permanently consume a free buffer frame."""
+    db_file = tmp_path / "test.db"
+    with PageFile(db_file) as pf:
+        failing_pid = pf.allocate_page()
+        usable_pid = pf.allocate_page()
+        bpm = BufferPoolManager(pf, pool_size=1)
+        original_read = pf.read_page
+
+        def fail_requested_page(page_id):
+            if page_id == failing_pid:
+                raise StorageCorruptionError("simulated failed read")
+            return original_read(page_id)
+
+        monkeypatch.setattr(pf, "read_page", fail_requested_page)
+        with pytest.raises(StorageCorruptionError, match="simulated failed read"):
+            bpm.fetch_page(failing_pid)
+
+        assert bpm.cached_page_count == 0
+        assert bpm._frames[0].pin_count == 0
+        assert bpm.fetch_page(usable_pid) == Page.blank()
+
+
+def test_failed_read_returns_evicted_frame_to_pool(tmp_path: Path, monkeypatch) -> None:
+    """A read failure after eviction must leave the victim frame reusable."""
+    db_file = tmp_path / "test.db"
+    with PageFile(db_file) as pf:
+        victim_pid = pf.allocate_page()
+        failing_pid = pf.allocate_page()
+        usable_pid = pf.allocate_page()
+        bpm = BufferPoolManager(pf, pool_size=1)
+        bpm.fetch_page(victim_pid)
+        bpm.unpin_page(victim_pid)
+        original_read = pf.read_page
+
+        def fail_requested_page(page_id):
+            if page_id == failing_pid:
+                raise StorageCorruptionError("simulated failed read")
+            return original_read(page_id)
+
+        monkeypatch.setattr(pf, "read_page", fail_requested_page)
+        with pytest.raises(StorageCorruptionError, match="simulated failed read"):
+            bpm.fetch_page(failing_pid)
+
+        assert not bpm.contains_page(victim_pid)
+        assert bpm.cached_page_count == 0
+        assert bpm._frames[0].pin_count == 0
+        assert bpm.fetch_page(usable_pid) == Page.blank()
 
 
 @pytest.mark.parametrize("bad_pid", [-1, True, "0", 2.0])

@@ -256,8 +256,15 @@ class BufferPoolManager:
         fid = self._get_available_frame()
         frame = self._frames[fid]
 
-        # Read page from disk
-        disk_page = self._page_file.read_page(pid)
+        # Read page from disk.  Frame acquisition removes this slot from both
+        # reusable-frame trackers, so a failed read must return it to the free list.
+        try:
+            disk_page = self._page_file.read_page(pid)
+        except Exception:
+            frame.reset()
+            self._replacer.pin(fid)
+            self._free_list.append(fid)
+            raise
 
         # Populate frame
         frame.page_id = pid
