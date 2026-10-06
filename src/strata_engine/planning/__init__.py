@@ -16,6 +16,7 @@ from strata_engine.planning.projection_plan import ProjectionPlan
 from strata_engine.planning.sort_plan import SortPlan
 from strata_engine.planning.query_request import QueryRequest
 from strata_engine.planning.table_scan_plan import TableScanPlan
+from strata_engine.planning.index_scan_plan import IndexScanPlan
 
 __all__ = [
     "PlanningError",
@@ -31,6 +32,7 @@ __all__ = [
     "AmbiguousColumnError",
     "Plan",
     "TableScanPlan",
+    "IndexScanPlan",
     "FilterPlan",
     "ProjectionPlan",
     "SortPlan",

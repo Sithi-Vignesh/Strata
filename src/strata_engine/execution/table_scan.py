@@ -18,7 +18,7 @@ class TableScan(Operator):
     discarding physical RecordId identifiers.
     """
 
-    __slots__ = ("_table", "_is_open", "_exhausted", "_iter")
+    __slots__ = ("_table", "_is_open", "_exhausted", "_iter", "_tuples_examined")
 
     def __init__(self, table: Table) -> None:
         """Initialize TableScan with an open Table.
@@ -36,6 +36,7 @@ class TableScan(Operator):
         self._is_open: bool = False
         self._exhausted: bool = False
         self._iter: Optional[Iterator[PyTuple[RecordId, Tuple]]] = None
+        self._tuples_examined: int = 0
 
     @property
     def table(self) -> Table:
@@ -51,6 +52,11 @@ class TableScan(Operator):
     def is_open(self) -> bool:
         """Return True if the scan operator is currently open."""
         return self._is_open
+
+    @property
+    def tuples_examined(self) -> int:
+        """Return tuples pulled from the table during the current execution."""
+        return self._tuples_examined
 
     def open(self) -> None:
         """Open or rewind the scan from the beginning of the table.
@@ -74,6 +80,7 @@ class TableScan(Operator):
             self._iter = self._table.scan()
             self._is_open = True
             self._exhausted = False
+            self._tuples_examined = 0
         except Exception:
             try:
                 self.close()
@@ -97,6 +104,7 @@ class TableScan(Operator):
         try:
             assert self._iter is not None
             _rid, tuple_obj = next(self._iter)
+            self._tuples_examined += 1
             return tuple_obj
         except StopIteration:
             self._exhausted = True

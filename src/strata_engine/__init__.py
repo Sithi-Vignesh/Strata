@@ -30,6 +30,7 @@ from strata_engine.planning import (
     ProjectionPlan,
     QueryRequest,
     TableScanPlan,
+    IndexScanPlan,
     SortPlan,
 )
 from strata_engine.execution import (
@@ -49,6 +50,7 @@ from strata_engine.execution import (
     Projection,
     Sort,
     TableScan,
+    IndexScan,
 )
 from strata_engine.sql import (
     Binder,
@@ -122,6 +124,7 @@ __all__ = [
     "AggregatePlan",
     "Plan",
     "TableScanPlan",
+    "IndexScanPlan",
     "FilterPlan",
     "ProjectionPlan",
     "SortPlan",
@@ -193,6 +196,7 @@ __all__ = [
     "OperatorClosedError",
     "Operator",
     "TableScan",
+    "IndexScan",
     "Predicate",
     "ComparisonPredicate",
     "IsNullPredicate",

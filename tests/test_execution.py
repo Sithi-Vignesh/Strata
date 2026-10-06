@@ -221,6 +221,24 @@ def test_table_scan_tuple_properties_and_no_record_id(populated_table) -> None:
     scan.close()
 
 
+def test_table_scan_tuples_examined_resets_and_stabilizes_at_eof(populated_table) -> None:
+    tbl, _ = populated_table
+    scan = TableScan(tbl)
+    assert scan.tuples_examined == 0
+    scan.open()
+    assert scan.next() is not None
+    assert scan.tuples_examined == 1
+    while scan.next() is not None:
+        pass
+    assert scan.tuples_examined == 5
+    assert scan.next() is None
+    assert scan.tuples_examined == 5
+    scan.close()
+    scan.open()
+    assert scan.tuples_examined == 0
+    scan.close()
+
+
 def test_table_scan_does_not_close_table(populated_table) -> None:
     """Verify TableScan.close() does NOT close the underlying borrowed Table."""
     tbl, _ = populated_table

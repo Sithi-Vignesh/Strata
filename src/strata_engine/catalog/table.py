@@ -104,6 +104,18 @@ class Table:
         """Open operational index bindings attached to this table."""
         return tuple(self._indexes)
 
+    def index_for_column(self, column_name: str) -> Optional[TableIndex]:
+        """Return the deterministic live index binding for one table column.
+
+        Resolves ``column_name`` with the table schema's normal
+        case-insensitive identifier rules.  If more than one index covers the
+        column, the lowest persistent index ID is selected.
+        """
+        self._check_not_closed()
+        ordinal = self._schema.column_index(column_name)
+        matches = (index for index in self._indexes if index.column_ordinal == ordinal)
+        return min(matches, key=lambda index: index.index_id, default=None)
+
     def _attach_index(self, index: TableIndex) -> None:
         """Catalog-internal attachment after successful create/backfill."""
         self._check_not_closed()

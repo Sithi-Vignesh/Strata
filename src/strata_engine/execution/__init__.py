@@ -23,12 +23,14 @@ from strata_engine.execution.predicate import (
 from strata_engine.execution.projection import Projection
 from strata_engine.execution.sort import Sort
 from strata_engine.execution.table_scan import TableScan
+from strata_engine.execution.index_scan import IndexScan
 
 __all__ = [
     "ExecutionError",
     "OperatorClosedError",
     "Operator",
     "TableScan",
+    "IndexScan",
     "Predicate",
     "ComparisonPredicate",
     "IsNullPredicate",

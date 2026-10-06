@@ -8,6 +8,7 @@ from strata_engine.planning.projection_plan import ProjectionPlan
 from strata_engine.planning.sort_plan import SortPlan
 from strata_engine.planning.query_request import QueryRequest
 from strata_engine.planning.table_scan_plan import TableScanPlan
+from strata_engine.planning.index_scan_plan import IndexScanPlan
 from strata_engine.planning.join_plan import JoinPlan
 from strata_engine.planning.join_projection_plan import JoinProjectionPlan
 from strata_engine.planning.join import AndCondition, ColumnLiteralCondition, IsNullCondition, NotCondition, OrCondition
@@ -25,8 +26,8 @@ class Planner:
         if not isinstance(request, QueryRequest):
             raise TypeError(f"Expected QueryRequest instance, got {type(request).__name__}.")
 
-        plan: Plan = TableScanPlan(request.table)
         if request.join is not None:
+            plan: Plan = TableScanPlan(request.table)
             right = TableScanPlan(request.join.right_table)
             plan = JoinPlan(plan, right, request.join.condition, request.table.name, request.join.right_table.name)
             layout = plan.layout
@@ -64,6 +65,7 @@ class Planner:
             plan = JoinProjectionPlan(plan, tuple(layout.resolve(item) for item in request.join_projection))
             if request.limit is not None: plan = LimitPlan(plan, request.limit, request.offset)
             return plan
+        plan = _choose_access_path(request)
         if request.predicate is not None:
             plan = FilterPlan(plan, request.predicate)
         if request.aggregates is not None:
@@ -96,3 +98,32 @@ def _resolve_join_aggregate_column(column: str | ColumnRef, layout) -> str:
     if isinstance(column, str):
         column = ColumnRef(column)
     return layout.resolve(column).internal_name
+
+
+def _choose_access_path(request: QueryRequest) -> Plan:
+    """Choose a deterministic base scan without optimizer statistics."""
+    predicate = request.predicate
+    if predicate is not None:
+        comparison = _first_indexed_comparison(predicate, request)
+        if comparison is not None:
+            index = request.table.index_for_column(comparison.column_name)
+            assert index is not None
+            return IndexScanPlan(request.table, index, comparison.op, comparison.literal)
+    return TableScanPlan(request.table)
+
+
+def _first_indexed_comparison(predicate, request: QueryRequest) -> ComparisonPredicate | None:
+    """Return the first eligible comparison in a left-to-right AND traversal."""
+    if isinstance(predicate, ComparisonPredicate):
+        if predicate.op not in {"=", "<", "<=", ">", ">="}:
+            return None
+        index = request.table.index_for_column(predicate.column_name)
+        column = request.table.schema.get_column_by_name(predicate.column_name)
+        if index is not None and index.key_type == column.data_type:
+            return predicate
+        return None
+    if isinstance(predicate, AndPredicate):
+        return _first_indexed_comparison(predicate.left, request) or _first_indexed_comparison(
+            predicate.right, request
+        )
+    return None
