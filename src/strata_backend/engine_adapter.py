@@ -6,7 +6,7 @@ phases, execute queries and manage transactions.
 """
 
 from typing import Any, Optional
-from strata_engine import StrataEngine
+from strata_engine import ProfiledExecutionResult, StrataEngine
 
 
 class EngineAdapter:
@@ -33,3 +33,7 @@ class EngineAdapter:
             dict containing engine metadata and operational state.
         """
         return self._engine.status()
+
+    def execute_profiled(self, sql: str) -> ProfiledExecutionResult:
+        """Delegate one profiled SQL execution to the owned engine."""
+        return self._engine.execute_profiled(sql)

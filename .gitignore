@@ -32,7 +32,7 @@ data/*.dat
 data/*.bin
 data/*.log
 data/*.lock
-!data/.gitkeep
+/data/dbthon_demo/
 
 # Logs
 *.log
