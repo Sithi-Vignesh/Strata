@@ -61,3 +61,34 @@ class DeleteCommand:
                 "Expected Predicate instance or None for predicate, "
                 f"got {type(self.predicate).__name__}."
             )
+
+
+@dataclass(frozen=True, slots=True)
+class BoundUpdateAssignment:
+    """One resolved UPDATE assignment with its schema ordinal."""
+
+    column_index: int
+    value: object | None
+
+    def __post_init__(self) -> None:
+        if type(self.column_index) is not int or self.column_index < 0:
+            raise ValueError("column_index must be a non-negative integer.")
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateCommand:
+    """Resolved literal-only UPDATE target, assignments, and optional predicate."""
+
+    table: Table
+    assignments: tuple[BoundUpdateAssignment, ...]
+    predicate: Predicate | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table, Table):
+            raise TypeError(f"Expected Table instance, got {type(self.table).__name__}.")
+        if not isinstance(self.assignments, tuple) or not self.assignments:
+            raise ValueError("assignments must be a non-empty tuple.")
+        if not all(isinstance(item, BoundUpdateAssignment) for item in self.assignments):
+            raise TypeError("assignments must contain BoundUpdateAssignment values.")
+        if self.predicate is not None and not isinstance(self.predicate, Predicate):
+            raise TypeError("predicate must be a Predicate or None.")

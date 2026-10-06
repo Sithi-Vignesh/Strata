@@ -9,7 +9,7 @@ from typing import Any, List, Optional, Union
 
 from strata_engine.catalog.catalog import Catalog
 from strata_engine.catalog.table import Table
-from strata_engine.commands import CreateTableCommand, DeleteCommand, DropTableCommand, InsertCommand
+from strata_engine.commands import CreateTableCommand, DeleteCommand, DropTableCommand, InsertCommand, UpdateCommand
 from strata_engine.execution import Aggregate, Filter, IndexScan, Limit, MutationTargetScan, Projection, Sort, TableScan
 from strata_engine.planning import (
     AggregatePlan,
@@ -32,6 +32,7 @@ from strata_engine.result import (
     TableScanMetrics,
 )
 from strata_engine.schema.schema import Schema
+from strata_engine.schema import Tuple, TupleSerializer
 from strata_engine.sql import Binder, Lexer, Parser
 from strata_engine.storage.exceptions import StorageClosedError
 
@@ -205,6 +206,8 @@ class StrataEngine:
             return CommandResult(affected_rows=0)
         if isinstance(bound, DeleteCommand):
             return _execute_delete(bound)
+        if isinstance(bound, UpdateCommand):
+            return _execute_update(bound)
         raise TypeError(f"Unsupported bound statement type {type(bound).__name__}.")
 
     def execute_profiled(self, sql: str) -> ProfiledExecutionResult:
@@ -235,6 +238,8 @@ class StrataEngine:
             return ProfiledExecutionResult(CommandResult(affected_rows=0), None)
         if isinstance(bound, DeleteCommand):
             return ProfiledExecutionResult(_execute_delete(bound), None)
+        if isinstance(bound, UpdateCommand):
+            return ProfiledExecutionResult(_execute_update(bound), None)
         raise TypeError(f"Unsupported bound statement type {type(bound).__name__}.")
 
     def __enter__(self) -> "StrataEngine":
@@ -260,6 +265,24 @@ def _execute_delete(command: DeleteCommand) -> CommandResult:
         command.table.delete(record_id)
         affected_rows += 1
     return CommandResult(affected_rows=affected_rows)
+
+
+def _execute_update(command: UpdateCommand) -> CommandResult:
+    """Prepare every replacement before applying the materialized target snapshot."""
+    targets = MutationTargetScan(command.table, command.predicate).collect()
+    serializer = TupleSerializer(command.table.schema)
+    prepared: list[tuple[object, Tuple]] = []
+    for record_id, old_row in targets:
+        values = list(old_row.values)
+        for assignment in command.assignments:
+            values[assignment.column_index] = assignment.value
+        new_row = Tuple(values, schema=command.table.schema)
+        serializer.serialize(new_row)
+        prepared.append((record_id, new_row))
+
+    for record_id, new_row in prepared:
+        command.table.update(record_id, new_row)
+    return CommandResult(affected_rows=len(prepared))
 
 
 def _compose_query_profile(plan: object, operator: object) -> QueryProfile:

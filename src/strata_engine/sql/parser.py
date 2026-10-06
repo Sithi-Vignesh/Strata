@@ -23,6 +23,8 @@ from strata_engine.sql.ast import (
     CreateTableStatement,
     DeleteStatement,
     DropTableStatement,
+    UpdateAssignment,
+    UpdateStatement,
     Statement,
 )
 from strata_engine.sql.exceptions import SQLParseError
@@ -67,8 +69,10 @@ class Parser:
             statement = self._drop_table_statement()
         elif self._peek().type == TokenType.DELETE:
             statement = self._delete_statement()
+        elif self._peek().type == TokenType.UPDATE:
+            statement = self._update_statement()
         else:
-            self._raise_expected("SELECT, INSERT, CREATE, DROP, or DELETE")
+            self._raise_expected("SELECT, INSERT, CREATE, DROP, DELETE, or UPDATE")
 
         self._match(TokenType.SEMICOLON)
         self._consume(TokenType.EOF, "end of statement")
@@ -166,6 +170,22 @@ class Parser:
         table_name = self._consume(TokenType.IDENTIFIER, "table identifier").lexeme
         where = self._predicate() if self._match(TokenType.WHERE) else None
         return DeleteStatement(table_name, where)
+
+    def _update_statement(self) -> UpdateStatement:
+        """Parse one literal-only UPDATE statement without its terminator."""
+        self._consume(TokenType.UPDATE, "UPDATE")
+        table_name = self._consume(TokenType.IDENTIFIER, "table identifier").lexeme
+        self._consume(TokenType.SET, "SET after table identifier")
+        assignments = [self._update_assignment()]
+        while self._match(TokenType.COMMA):
+            assignments.append(self._update_assignment())
+        where = self._predicate() if self._match(TokenType.WHERE) else None
+        return UpdateStatement(table_name, tuple(assignments), where)
+
+    def _update_assignment(self) -> UpdateAssignment:
+        column_name = self._consume(TokenType.IDENTIFIER, "assignment column identifier").lexeme
+        self._consume(TokenType.EQUAL, "'=' after assignment column")
+        return UpdateAssignment(column_name, self._consume_insert_literal())
 
     def _column_definition(self) -> ColumnDefinition:
         name = self._consume(TokenType.IDENTIFIER, "column identifier").lexeme

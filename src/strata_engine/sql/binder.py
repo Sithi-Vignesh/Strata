@@ -1,7 +1,7 @@
 """Binding from unresolved SQL syntax to existing Strata query requests."""
 
 from strata_engine.catalog import Catalog
-from strata_engine.commands import CreateTableCommand, DeleteCommand, DropTableCommand, InsertCommand
+from strata_engine.commands import BoundUpdateAssignment, CreateTableCommand, DeleteCommand, DropTableCommand, InsertCommand, UpdateCommand
 from strata_engine.execution import (
     AndPredicate,
     ComparisonPredicate,
@@ -33,10 +33,11 @@ from strata_engine.sql.ast import (
     CreateTableStatement,
     DeleteStatement,
     DropTableStatement,
+    UpdateStatement,
     Statement,
 )
 from strata_engine.sql.exceptions import SQLBindingError
-from strata_engine.schema import Column, DataType, Schema
+from strata_engine.schema import Column, DataType, Schema, TupleSerializer
 
 
 class Binder:
@@ -47,7 +48,7 @@ class Binder:
             raise TypeError(f"Expected Catalog instance, got {type(catalog).__name__}.")
         self._catalog = catalog
 
-    def bind(self, statement: Statement) -> QueryRequest | InsertCommand | CreateTableCommand | DropTableCommand | DeleteCommand:
+    def bind(self, statement: Statement) -> QueryRequest | InsertCommand | CreateTableCommand | DropTableCommand | DeleteCommand | UpdateCommand:
         """Resolve one statement without planning, scanning, or closing borrowed resources."""
         if isinstance(statement, InsertStatement):
             return InsertCommand(self._catalog.get_table(statement.table_name), statement.values)
@@ -63,6 +64,8 @@ class Binder:
             if predicate is not None:
                 predicate.validate(table.schema)
             return DeleteCommand(table, predicate)
+        if isinstance(statement, UpdateStatement):
+            return self._bind_update(statement)
         if not isinstance(statement, SelectStatement):
             raise TypeError(f"Expected supported SQL statement, got {type(statement).__name__}.")
 
@@ -130,6 +133,28 @@ class Binder:
             else:
                 columns.append(Column(definition.name, data_type))
         return CreateTableCommand(statement.table_name, Schema(columns))
+
+    def _bind_update(self, statement: UpdateStatement) -> UpdateCommand:
+        table = self._catalog.get_table(statement.table_name)
+        assignments: list[BoundUpdateAssignment] = []
+        seen: set[str] = set()
+        for assignment in statement.assignments:
+            key = assignment.column_name.lower()
+            if key in seen:
+                raise SQLBindingError(
+                    f"Duplicate UPDATE column '{assignment.column_name}' (matches case-insensitively)."
+                )
+            seen.add(key)
+            column_index = table.schema.column_index(assignment.column_name)
+            TupleSerializer(Schema([table.schema[column_index]])).serialize((assignment.value,))
+            assignments.append(BoundUpdateAssignment(column_index, assignment.value))
+
+        if statement.where is not None and _has_qualified_predicate(statement.where):
+            raise SQLBindingError("Qualified WHERE references require a JOIN.")
+        predicate = self._bind_predicate(statement.where) if statement.where is not None else None
+        if predicate is not None:
+            predicate.validate(table.schema)
+        return UpdateCommand(table, tuple(assignments), predicate)
 
     def _bind_grouped(self, statement: SelectStatement, table) -> QueryRequest:
         if any(ref.qualifier is not None for ref in statement.group_by or ()):

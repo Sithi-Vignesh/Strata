@@ -217,4 +217,39 @@ class DeleteStatement:
             raise TypeError("where must be a SQLPredicate or None.")
 
 
-Statement = SelectStatement | InsertStatement | CreateTableStatement | DropTableStatement | DeleteStatement
+@dataclass(frozen=True, slots=True)
+class UpdateAssignment:
+    """One unresolved literal assignment in an UPDATE SET clause."""
+
+    column_name: str
+    value: object | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.column_name, str):
+            raise TypeError(f"column_name must be a str, got {type(self.column_name).__name__}.")
+        if self.value is not None and type(self.value) not in (int, float, str, bool):
+            raise TypeError("Update assignment values must be SQL literal values.")
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateStatement:
+    """One unresolved literal-only UPDATE statement."""
+
+    table_name: str
+    assignments: tuple[UpdateAssignment, ...]
+    where: SQLPredicate | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table_name, str):
+            raise TypeError(f"table_name must be a str, got {type(self.table_name).__name__}.")
+        if not isinstance(self.assignments, Sequence) or isinstance(self.assignments, (str, bytes)):
+            raise TypeError("Update assignments must be a sequence of UpdateAssignment objects.")
+        assignments = tuple(self.assignments)
+        if not assignments or not all(isinstance(item, UpdateAssignment) for item in assignments):
+            raise ValueError("UpdateStatement requires one or more assignments.")
+        if self.where is not None and not isinstance(self.where, SQLPredicate):
+            raise TypeError("where must be a SQLPredicate or None.")
+        object.__setattr__(self, "assignments", assignments)
+
+
+Statement = SelectStatement | InsertStatement | CreateTableStatement | DropTableStatement | DeleteStatement | UpdateStatement
