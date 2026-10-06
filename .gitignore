@@ -46,3 +46,8 @@ data/*.lock
 # OS temporary files
 .DS_Store
 Thumbs.db
+
+# Frontend generated artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
