@@ -2,13 +2,13 @@
 
 > **Strata: A Collaborative Project Management System Powered by a Relational Database Engine Built from Scratch**
 
-Strata is a database-systems project in which a realistic project-management application is the workload and the custom relational DBMS is the technical innovation. It consists of a relational engine written from scratch in Python, a FastAPI bridge that exposes the engine to the application, a React/TypeScript frontend under active development, and a deterministic DBthon task-management demo workload. It uses no external database engine or ORM.
+Strata is a database-systems project in which a realistic project-management application is the workload and the custom relational DBMS is the technical innovation. It consists of a relational engine written from scratch in Python, a FastAPI bridge that exposes the engine to the application, and a React/TypeScript frontend for a deterministic DBthon task-management workload. It uses no external database engine or ORM.
 
 ## Status
 
-The database and backend foundation required for the DBthon demo is complete and frozen. The completed milestones include rule-based index-aware execution (Phase 21A), query execution profiling (Phase 21B.1), and the FastAPI DBthon bridge with deterministic demo bootstrap (Phase 21B.2).
+The DBthon demo scope is complete and feature-frozen: custom relational storage and SQL execution, persistent B+ Tree indexing, rule-based index-aware execution, Execution Profile metrics, a FastAPI bridge, SQL-backed product pages, SQL Console, and Engine architecture reveal.
 
-UI-1, the completed frontend foundation, provides React, TypeScript, Vite, Tailwind CSS v4, routing, typed API integration, a development proxy, backend health connectivity, and focused tests. Its routes are intentionally placeholder surfaces; the polished product experience and execution visualizations are later UI work.
+The application is the workload; the custom DBMS is the innovation. Overview, Tasks, and Board establish the project-management workload; SQL Console exposes direct engine execution and real TableScan/IndexScan work; Engine explains the implemented DBMS architecture.
 
 ### Completed phase history
 
@@ -39,48 +39,21 @@ UI-1, the completed frontend foundation, provides React, TypeScript, Vite, Tailw
 | 21B.1 - Query Execution Profiling | Actual scan-work instrumentation through `execute_profiled()`. |
 | 21B.2 - DBthon FastAPI Bridge | Profile API, deterministic task bootstrap, CORS, and safe health endpoint. |
 | UI-1 - Frontend Foundation & Backend Integration | React/Vite foundation, routing, typed client, Vite proxy, health check, and frontend tests. |
+| UI-2 to UI-6 - Product, SQL Console, Profiles, and Engine Reveal | Application shell, SQL-backed workload views, SQL Console, Execution Profile, and static engine architecture reveal. |
 
 ## Current architecture
 
 ```text
-React / TypeScript Frontend
-        |
-        | HTTP
-        v
-FastAPI
-        |
-        v
-EngineAdapter
-        |
-        v
-StrataEngine
-        |
-        v
-SQL Lexer / Parser
-        |
-        v
-Binder
-        |
-        v
-Planner
-        |
-        v
-Execution Operators
-        |
-        v
-Schema / Catalog / Table
-        |
-        v
-Heap / Buffer Pool
-        |
-        v
-Pages / Records
-        |
-        v
-Disk
+React / TypeScript frontend
+        ↓ HTTP
+FastAPI bridge / EngineAdapter
+        ↓
+Strata custom relational engine
+        ↓
+SQL frontend → Binder → Planner → Execution → Storage
 ```
 
-SQL AST nodes are syntax-oriented and unresolved. The Binder resolves SQL against the catalog, the Planner creates physical plans, and execution remains independent of SQL and planning. Storage knows nothing about SQL. FastAPI uses the public engine boundary through `EngineAdapter`, and the frontend interacts with the backend through HTTP only.
+The SQL frontend tokenizes and parses one supported statement into an unresolved syntax tree. The Binder resolves it against the catalog, the deterministic planner builds physical operators, and execution reaches page-backed storage. Persistent secondary B+ Tree indexes are part of the engine's catalog/storage architecture and can support eligible `IndexScan` access paths.
 
 ## Index-aware execution
 
@@ -101,7 +74,7 @@ Profiles describe actual executed scan work, not optimizer cost estimates, bench
 | `TableScan` | `tuples_examined` |
 | `IndexScan` | `tree_pages_visited`, `leaf_entries_examined`, `rids_selected`, `rows_fetched` |
 
-Candidate/index work can differ from the final returned-row count, and `LIMIT` can stop operator consumption early. Commands return `profile: null`. Joined queries also return `profile: null` rather than implying a misleading single access path. This capability is execution profiling, not SQL `EXPLAIN`.
+Candidate/index work can differ from the final returned-row count, and `LIMIT` can stop operator consumption early. Commands return `profile: null`. Joined queries also return `profile: null` rather than implying a misleading single access path. This capability reports execution/access metrics rather than a general plan viewer.
 
 ## DBthon FastAPI bridge
 
@@ -131,7 +104,7 @@ Bootstrap creates the `tasks` table with 1,000 deterministic rows and ensures th
 | `assignee` | `VARCHAR(32) NULL` |
 | `project` | `VARCHAR(32) NOT NULL` |
 
-Status distribution: `TODO`, `IN_PROGRESS`, `REVIEW`, `BLOCKED`, and `DONE` each have 200 rows. Priority distribution: `LOW`, `URGENT`, `HIGH`, and `MEDIUM` each have 250 rows.
+Status distribution: `TODO`, `IN_PROGRESS`, `REVIEW`, `BLOCKED`, and `DONE` each have 200 rows. Priority distribution: `LOW`, `URGENT`, `HIGH`, and `MEDIUM` each have 250 rows. Projects (`Strata Engine`, `Website`, `Infrastructure`, `Mobile App`, and `Analytics`) each have 200 rows. `assignee` is `NULL` when `id % 11 == 0`; other rows use deterministic names.
 
 ### TableScan and IndexScan demonstration
 
@@ -153,7 +126,7 @@ FROM tasks
 WHERE status = 'BLOCKED';
 ```
 
-It returns 200 rows and uses `IndexScan` through `tasks_status_idx`. The API and future UI expose current execution metrics at runtime; the README does not hardcode B+ tree traversal values or claim benchmark speedups.
+It returns 200 rows and uses `IndexScan` through `tasks_status_idx`. SQL Console exposes current execution metrics at runtime; this README does not hardcode B+ Tree traversal values or claim benchmark speedups.
 
 ## Current SQL capability
 
@@ -171,21 +144,17 @@ The SQL frontend supports a deliberately narrow subset:
 
 For grouped queries, `WHERE` runs before aggregation, while `ORDER BY` and `LIMIT`/`OFFSET` run afterward. Ordinary selected columns must appear in `GROUP BY`; `GROUP BY` without aggregates is unsupported. `INSERT` accepts exactly one literal row in schema order and returns `CommandResult(affected_rows=1)`. SQL-created columns are non-nullable.
 
-## Frontend UI-1 foundation
+## Frontend product surface
 
-The `frontend/` application uses React, TypeScript, Vite, Tailwind CSS v4, and React Router. UI-1 establishes a typed backend API contract, a typed `fetch` client, Vite development proxying, a small backend-health indicator, and frontend tests.
+The `frontend/` application uses React, TypeScript, Vite, Tailwind CSS v4, and React Router. It uses a typed HTTP client, Vite development proxying, a backend-health indicator, and focused frontend tests.
 
-Current routes are foundation/placeholder surfaces:
-
-```text
-/
-/tasks
-/board
-/sql
-/engine
-```
-
-Later UI phases will implement the product-management experience, SQL console, execution-profile presentation, and engine visualizations.
+| Page | Current behavior |
+| --- | --- |
+| Overview | SQL-backed status summary for the project-management workload. |
+| Tasks | SQL-backed deterministic task table. |
+| Board | SQL-backed task board grouped by status. |
+| SQL Console | Executes supported SQL, provides TableScan and IndexScan presets, renders generic results, and shows an Execution Profile. |
+| Engine | Static architecture reveal for SQL frontend, binding, planning, iterator execution, persistence, and B+ Tree indexing. |
 
 ## Repository structure
 
@@ -196,7 +165,7 @@ Strata/
 |  |  |- api/             # typed backend client
 |  |  |- app/             # router and application entry
 |  |  |- components/      # shared layout
-|  |  |- pages/           # current placeholder route surfaces
+|  |  |- pages/           # product and database route surfaces
 |  |  `- types/           # API contract types
 |  |- package.json
 |  `- vite.config.ts
@@ -258,9 +227,9 @@ npm run build
 
 Authoritative Python/backend validation on Python 3.12.10 reports **585 passed**, **0 failed**, and **1 known third-party deprecation warning** (`StarletteDeprecationWarning` involving FastAPI `TestClient` / httpx).
 
-Frontend UI-1 validation on Node 22.14.0 and npm 10.9.2 reports:
+Final DBthon frontend validation baseline reports:
 
-- 2 frontend test files / 6 tests passed;
+- 9 frontend test files / 41 tests passed;
 - `npm run typecheck` passed;
 - `npm run test` passed;
 - `npm run build` passed;
@@ -268,9 +237,13 @@ Frontend UI-1 validation on Node 22.14.0 and npm 10.9.2 reports:
 
 The Python and frontend totals are separate validation baselines.
 
-## DBthon direction
+## DBthon demo flow
 
-The application is the workload; the custom DBMS is the innovation. The intended DBthon flow establishes Strata as a project-management application, shows its task workload, reveals the custom relational engine underneath, runs SQL against that workload, compares TableScan and IndexScan execution profiles, and exposes B+ tree instrumentation. The frontend visualization for this flow is not complete in UI-1.
+The application is the workload; the custom DBMS is the innovation. Show Overview, Tasks, and Board to establish the workload; use SQL Console to compare TableScan and IndexScan Execution Profiles; then use Engine to reveal the SQL-to-storage architecture and persistent B+ Tree indexing.
+
+## Demo reset
+
+The runtime demo database is `data/dbthon_demo`. Restarting the backend reuses it. For a clean deterministic demo, stop the backend, delete `data/dbthon_demo`, then restart the backend; bootstrap recreates the 1,000-row tasks dataset and `tasks_status_idx`. This is a destructive reset.
 
 ## Not yet implemented
 
@@ -281,7 +254,6 @@ The application is the workload; the custom DBMS is the innovation. The intended
 - multiple/chained joins, outer joins, or non-equality joins;
 - transactions, concurrency control, locking/deadlock handling, WAL, or recovery;
 - a broad production CRUD API, authentication, comments, notifications, or realtime collaboration;
-- polished product-management UI and DBthon execution visualizations.
 
 ## Historical notes
 

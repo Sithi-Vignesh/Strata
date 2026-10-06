@@ -1,5 +1,7 @@
 # Strata Development Guide — Phase 0
 
+> **Historical implementation snapshot.** This document records early development-phase guidance and may describe planned or excluded work that changed in later phases. For the current DBthon implementation status and supported capabilities, see [README.md](../README.md) and the current source/tests.
+
 This document outlines the local development workflow, environment configuration, testing procedures, and engineering guidelines for **Strata**.
 
 ---

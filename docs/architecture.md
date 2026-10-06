@@ -1,5 +1,7 @@
 # Strata Architecture — Phase 0
 
+> **Historical implementation snapshot.** This document records early phase design and may describe planned or excluded work that changed in later phases. For the current DBthon implementation status and supported capabilities, see [README.md](../README.md) and the current source/tests.
+
 ## 1. System Overview
 
 **Strata** is an educational relational database management system and collaborative task-management application developed for **CSE302L / BCSE302P (Database Systems & Database Systems Lab)**.

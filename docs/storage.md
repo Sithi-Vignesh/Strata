@@ -1,5 +1,7 @@
 # Strata Storage Engine — Storage Foundation, Slotted Pages, Buffer Management & Heap Files
 
+> **Historical implementation snapshot.** This document records storage-focused phase design and may describe planned or excluded work that changed in later phases. For the current DBthon implementation status and supported capabilities, see [README.md](../README.md) and the current source/tests.
+
 This document describes the design, architecture, binary layout, and usage of Strata's disk-backed storage engine (`strata_engine.storage`), covering Phase 1 (raw block I/O), Phase 2 (slotted-page record storage), Phase 3 (in-memory buffer pool management), and Phase 4 (heap file record storage).
 
 
