@@ -185,6 +185,29 @@ class HeapFile:
         finally:
             self._bpm.unpin_page(pid, is_dirty=is_dirty)
 
+    def update_record(self, record_id: RecordId, data: Union[bytes, bytearray]) -> None:
+        """Replace one record on its current page without changing its RecordId.
+
+        Raises ``InsufficientSpaceError`` when the replacement cannot fit the
+        current page.  This method never searches for another page or relocates
+        the record.
+        """
+        if not isinstance(record_id, RecordId):
+            raise TypeError(
+                f"Expected RecordId instance, got {type(record_id).__name__}."
+            )
+
+        pid = record_id.page_id
+        page = self._bpm.fetch_page(pid)
+        is_dirty = False
+        try:
+            sp = SlottedPage.from_page(page, page_id=pid)
+            sp.update_record(record_id.slot_id, data)
+            page.write_bytes(sp.to_bytes())
+            is_dirty = True
+        finally:
+            self._bpm.unpin_page(pid, is_dirty=is_dirty)
+
     def scan_records(self) -> Iterator[Tuple[RecordId, bytes]]:
         """Iterate over all active records across all pages in the heap file.
 

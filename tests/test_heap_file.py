@@ -20,6 +20,7 @@ from strata_engine.storage import (
     PAGE_SIZE,
     BufferPoolManager,
     HeapFile,
+    InsufficientSpaceError,
     PageFile,
     PageId,
     RecordId,
@@ -245,6 +246,59 @@ def test_get_record_not_found(tmp_path: Path) -> None:
 # ============================================================================
 # Record Deletion Tests
 # ============================================================================
+
+
+def test_update_record_preserves_rid_and_persists_across_reopen(tmp_path: Path) -> None:
+    db_file = tmp_path / "updated_heap.db"
+    payload = b"replacement payload"
+
+    with PageFile(db_file) as pf:
+        with BufferPoolManager(pf, pool_size=2) as bpm:
+            heap = HeapFile(bpm)
+            rid = heap.insert_record(b"original payload")
+            heap.update_record(rid, payload)
+            assert heap.get_record(rid) == payload
+            assert list(heap.scan_records()) == [(rid, payload)]
+
+    with PageFile(db_file) as reopened_file:
+        with BufferPoolManager(reopened_file, pool_size=2) as reopened_pool:
+            reopened_heap = HeapFile(reopened_pool)
+            assert reopened_heap.get_record(rid) == payload
+
+
+def test_update_record_never_relocates_and_preserves_old_record_on_failure(tmp_path: Path) -> None:
+    db_file = tmp_path / "source_page_only.db"
+    with PageFile(db_file) as pf:
+        with BufferPoolManager(pf, pool_size=2) as bpm:
+            heap = HeapFile(bpm)
+            target = heap.insert_record(b"A" * 1800)
+            other_on_source = heap.insert_record(b"B" * 1800)
+            other_page = heap.insert_record(b"C" * 1000)
+            assert target.page_id == other_on_source.page_id
+            assert other_page.page_id != target.page_id
+            before = list(heap.scan_records())
+
+            with pytest.raises(InsufficientSpaceError):
+                heap.update_record(target, b"D" * 2500)
+
+            assert heap.get_record(target) == b"A" * 1800
+            assert list(heap.scan_records()) == before
+            assert heap.get_record(other_page) == b"C" * 1000
+
+
+def test_update_record_rejects_invalid_and_deleted_rids(tmp_path: Path) -> None:
+    db_file = tmp_path / "invalid_update.db"
+    with PageFile(db_file) as pf:
+        with BufferPoolManager(pf, pool_size=2) as bpm:
+            heap = HeapFile(bpm)
+            rid = heap.insert_record(b"record")
+
+            with pytest.raises(TypeError):
+                heap.update_record((0, 0), b"replacement")  # type: ignore[arg-type]
+
+            heap.delete_record(rid)
+            with pytest.raises(RecordNotFoundError):
+                heap.update_record(rid, b"replacement")
 
 
 def test_delete_record_success(tmp_path: Path) -> None:
@@ -487,4 +541,3 @@ def test_heap_file_persistence_across_reopen(tmp_path: Path) -> None:
             assert len(scanned) == 15
             for rid, data in scanned:
                 assert inserted_records[rid] == data
-

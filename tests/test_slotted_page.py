@@ -605,6 +605,109 @@ def test_compaction_with_empty_and_deleted_slots() -> None:
     assert sp.get_record(s4) == b""
 
 
+# ============================================================================
+# Same-Page Record Replacement Tests
+# ============================================================================
+
+
+def test_update_record_same_size_preserves_slot_and_other_records() -> None:
+    sp = SlottedPage()
+    target = sp.insert_record(b"A" * 100)
+    other = sp.insert_record(b"B" * 100)
+
+    sp.update_record(target, b"C" * 100)
+
+    assert target == 0
+    assert sp.get_record(target) == b"C" * 100
+    assert sp.get_record(other) == b"B" * 100
+
+
+def test_update_record_smaller_reclaims_space_and_hides_old_suffix() -> None:
+    sp = SlottedPage()
+    target = sp.insert_record(b"A" * 400)
+    other = sp.insert_record(b"B" * 100)
+    free_before = sp.total_free_space_bytes
+
+    sp.update_record(target, b"short")
+
+    assert sp.get_record(target) == b"short"
+    assert sp.get_record(other) == b"B" * 100
+    assert sp.total_free_space_bytes == free_before + 395
+
+
+def test_update_record_larger_succeeds_when_source_page_has_capacity() -> None:
+    sp = SlottedPage()
+    target = sp.insert_record(b"A" * 100)
+    other = sp.insert_record(b"B" * 100)
+
+    sp.update_record(target, b"C" * 1000)
+
+    assert sp.get_record(target) == b"C" * 1000
+    assert sp.get_record(other) == b"B" * 100
+
+
+def test_update_record_larger_repacks_fragmented_page_with_stable_slots() -> None:
+    sp = SlottedPage()
+    target = sp.insert_record(b"A" * 1200)
+    deleted = sp.insert_record(b"B" * 1200)
+    other = sp.insert_record(b"C" * 1200)
+    sp.delete_record(deleted)
+    assert sp.contiguous_free_space_bytes < 800
+    assert sp.total_free_space_bytes >= 800
+
+    sp.update_record(target, b"D" * 2000)
+
+    assert sp.get_record(target) == b"D" * 2000
+    assert sp.get_record(other) == b"C" * 1200
+    with pytest.raises(RecordNotFoundError):
+        sp.get_record(deleted)
+
+
+def test_update_record_insufficient_space_leaves_page_unchanged_and_usable() -> None:
+    sp = SlottedPage()
+    target = sp.insert_record(b"A" * 1500)
+    other = sp.insert_record(b"B" * 1500)
+    before = sp.to_bytes()
+
+    with pytest.raises(InsufficientSpaceError):
+        sp.update_record(target, b"C" * 3000)
+
+    assert sp.to_bytes() == before
+    assert sp.get_record(target) == b"A" * 1500
+    assert sp.get_record(other) == b"B" * 1500
+    assert sp.insert_record(b"D" * 100) == 2
+
+
+def test_update_record_rejects_invalid_and_deleted_slots() -> None:
+    sp = SlottedPage()
+    target = sp.insert_record(b"record")
+
+    with pytest.raises(InvalidSlotIdError):
+        sp.update_record(-1, b"replacement")
+    with pytest.raises(InvalidSlotIdError):
+        sp.update_record(1, b"replacement")
+
+    sp.delete_record(target)
+    with pytest.raises(RecordNotFoundError):
+        sp.update_record(target, b"replacement")
+
+
+def test_update_record_empty_payload_and_following_normal_operations() -> None:
+    sp = SlottedPage()
+    target = sp.insert_record(b"record")
+    other = sp.insert_record(b"other")
+
+    sp.update_record(target, b"")
+    inserted = sp.insert_record(b"later")
+    sp.delete_record(other)
+    sp.compact()
+
+    assert sp.get_record(target) == b""
+    assert sp.get_record(inserted) == b"later"
+    with pytest.raises(RecordNotFoundError):
+        sp.get_record(other)
+
+
 def test_corruption_invalid_live_zero_length_offset() -> None:
     """Verify a slot with length 0 but offset != LIVE_EMPTY_RECORD_OFFSET raises SlottedPageCorruptionError."""
     sp = SlottedPage()

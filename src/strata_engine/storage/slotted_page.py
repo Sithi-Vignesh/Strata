@@ -420,6 +420,72 @@ class SlottedPage:
         self._slots[slot_id] = (DELETED_SLOT_OFFSET, 0)
         self._write_slot(slot_id, DELETED_SLOT_OFFSET, 0)
 
+    def update_record(self, slot_id: int, data: Union[bytes, bytearray]) -> None:
+        """Replace one live record while preserving its slot ID.
+
+        The replacement is rebuilt into a temporary page image before it is
+        committed, so an insufficient-capacity failure leaves this page
+        unchanged.  Other live records may move within the page, but their
+        slot IDs remain stable.
+        """
+        if not isinstance(data, (bytes, bytearray)):
+            raise TypeError(
+                f"Record data must be bytes-like, got {type(data).__name__}."
+            )
+        if len(data) > MAX_RECORD_SIZE:
+            raise RecordSizeError(
+                f"Record of {len(data)} bytes exceeds maximum page capacity of {MAX_RECORD_SIZE} bytes."
+            )
+
+        # Reuse established slot validation and deleted-slot behavior.
+        self.get_record(slot_id)
+
+        live_bytes = sum(
+            len(data) if index == slot_id else length
+            for index, (offset, length) in enumerate(self._slots)
+            if offset != DELETED_SLOT_OFFSET
+        )
+        if self.slot_directory_end + live_bytes > PAGE_SIZE:
+            raise InsufficientSpaceError(
+                f"Insufficient space to replace record at slot {slot_id}: "
+                f"need {len(data)} bytes with {self.total_free_space_bytes} bytes free."
+            )
+
+        new_buffer = bytearray(PAGE_SIZE)
+        new_free_space_offset = PAGE_SIZE
+        new_slots: List[Tuple[int, int]] = []
+        replacement = bytes(data)
+
+        for index, (offset, length) in enumerate(self._slots):
+            if offset == DELETED_SLOT_OFFSET:
+                new_slots.append((DELETED_SLOT_OFFSET, 0))
+                continue
+
+            record_data = replacement if index == slot_id else self.get_record(index)
+            if not record_data:
+                new_slots.append((LIVE_EMPTY_RECORD_OFFSET, 0))
+                continue
+
+            new_free_space_offset -= len(record_data)
+            new_buffer[new_free_space_offset : new_free_space_offset + len(record_data)] = record_data
+            new_slots.append((new_free_space_offset, len(record_data)))
+
+        struct.pack_into(
+            PAGE_HEADER_FORMAT,
+            new_buffer,
+            0,
+            PAGE_HEADER_MAGIC,
+            self._flags,
+            self._slot_count,
+            new_free_space_offset,
+        )
+        for index, (offset, length) in enumerate(new_slots):
+            struct.pack_into(SLOT_ENTRY_FORMAT, new_buffer, PAGE_HEADER_SIZE + index * SLOT_ENTRY_SIZE, offset, length)
+
+        self._buffer = new_buffer
+        self._free_space_offset = new_free_space_offset
+        self._slots = new_slots
+
     def compact(self) -> None:
         """Defragment the page by packing live records contiguously at the end.
 
