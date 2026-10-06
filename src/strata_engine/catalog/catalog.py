@@ -8,10 +8,13 @@ from typing import Dict, List, Optional, Union
 from strata_engine.catalog.exceptions import (
     CatalogCorruptionError,
     CatalogError,
+    IndexAlreadyExistsError,
     ReservedNameError,
     TableAlreadyExistsError,
     TableNotFoundError,
+    UnsupportedIndexTypeError,
 )
+from strata_engine.catalog.index import IndexMetadata, TableIndex
 from strata_engine.catalog.table import Table
 from strata_engine.schema.column import Column
 from strata_engine.schema.data_type import DataType
@@ -20,14 +23,17 @@ from strata_engine.schema.schema import Schema
 from strata_engine.schema.serializer import TupleSerializer
 from strata_engine.schema.tuple import Tuple
 from strata_engine.storage.buffer_pool import BufferPoolManager
-from strata_engine.storage.exceptions import StorageClosedError
+from strata_engine.storage.b_plus_tree import BPlusTree
+from strata_engine.storage.exceptions import BPlusTreeError, StorageClosedError, StorageCorruptionError
 from strata_engine.storage.heap_file import HeapFile
 from strata_engine.storage.page_file import PageFile
 from strata_engine.storage.record_id import RecordId
 
 TABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 ORPHAN_FILE_PATTERN = re.compile(r"^table_([1-9][0-9]*)\.db$")
+INDEX_FILE_PATTERN = re.compile(r"^index_([1-9][0-9]*)\.db$")
 HEADER_PREFIX = "STRATA_CATALOG_V1:HWM="
+INDEX_HEADER_PREFIX = "STRATA_INDEX_CATALOG_V1:HWM="
 
 # Compile-time internal system schemas
 SYSTEM_TABLES_SCHEMA = Schema([
@@ -42,6 +48,14 @@ SYSTEM_COLUMNS_SCHEMA = Schema([
     Column("data_type", DataType.VARCHAR, nullable=False, max_length=16),
     Column("nullable", DataType.BOOLEAN, nullable=False),
     Column("max_length", DataType.INTEGER, nullable=True),
+])
+
+SYSTEM_INDEXES_SCHEMA = Schema([
+    Column("index_id", DataType.INTEGER, nullable=False),
+    Column("index_name", DataType.VARCHAR, nullable=False, max_length=64),
+    Column("table_id", DataType.INTEGER, nullable=True),
+    Column("column_ordinal", DataType.INTEGER, nullable=True),
+    Column("key_type", DataType.VARCHAR, nullable=True, max_length=16),
 ])
 
 
@@ -91,15 +105,22 @@ class Catalog:
         self._tables_dir: Path = self._data_dir / "tables"
         self._tables_db_path: Path = self._catalog_dir / "tables.db"
         self._columns_db_path: Path = self._catalog_dir / "columns.db"
+        self._indexes_dir: Path = self._data_dir / "indexes"
+        self._indexes_db_path: Path = self._catalog_dir / "indexes.db"
 
         self._tables_serializer = TupleSerializer(SYSTEM_TABLES_SCHEMA)
         self._columns_serializer = TupleSerializer(SYSTEM_COLUMNS_SCHEMA)
+        self._indexes_serializer = TupleSerializer(SYSTEM_INDEXES_SCHEMA)
 
         self._tables_meta: Dict[str, TableMetadata] = {}
         self._open_tables: Dict[str, Table] = {}
+        self._indexes_meta: Dict[str, IndexMetadata] = {}
+        self._indexes_by_table: Dict[int, List[IndexMetadata]] = {}
 
         self._hwm: int = 0
         self._header_rid: Optional[RecordId] = None
+        self._index_hwm: int = 0
+        self._index_header_rid: Optional[RecordId] = None
 
         tables_exist = self._tables_db_path.exists()
         columns_exist = self._columns_db_path.exists()
@@ -133,6 +154,7 @@ class Catalog:
         """Initialize a brand-new catalog directory and persist version descriptor."""
         self._catalog_dir.mkdir(parents=True, exist_ok=True)
         self._tables_dir.mkdir(parents=True, exist_ok=True)
+        self._indexes_dir.mkdir(parents=True, exist_ok=True)
 
         self._tables_pf = PageFile(self._tables_db_path)
         self._tables_bpm = BufferPoolManager(self._tables_pf, pool_size=5)
@@ -141,6 +163,8 @@ class Catalog:
         self._columns_pf = PageFile(self._columns_db_path)
         self._columns_bpm = BufferPoolManager(self._columns_pf, pool_size=5)
         self._columns_heap = HeapFile(self._columns_bpm)
+
+        self._bootstrap_indexes_catalog()
 
         self._hwm = 0
         header_tuple = Tuple([0, f"{HEADER_PREFIX}0"], SYSTEM_TABLES_SCHEMA)
@@ -151,6 +175,16 @@ class Catalog:
         self._tables_bpm.flush_all()
         self._columns_bpm.flush_all()
 
+    def _bootstrap_indexes_catalog(self) -> None:
+        self._indexes_dir.mkdir(parents=True, exist_ok=True)
+        self._indexes_pf = PageFile(self._indexes_db_path)
+        self._indexes_bpm = BufferPoolManager(self._indexes_pf, pool_size=5)
+        self._indexes_heap = HeapFile(self._indexes_bpm)
+        self._index_hwm = 0
+        header = Tuple([0, f"{INDEX_HEADER_PREFIX}0", None, None, None], SYSTEM_INDEXES_SCHEMA)
+        self._index_header_rid = self._indexes_heap.insert_record(self._indexes_serializer.serialize(header))
+        self._indexes_bpm.flush_all()
+
     def _reopen_existing_catalog(self) -> None:
         """Recover catalog metadata and table definitions from existing files."""
         self._tables_pf = PageFile(self._tables_db_path)
@@ -160,6 +194,21 @@ class Catalog:
         self._columns_pf = PageFile(self._columns_db_path)
         self._columns_bpm = BufferPoolManager(self._columns_pf, pool_size=5)
         self._columns_heap = HeapFile(self._columns_bpm)
+
+        # A missing index catalog is the supported Phase 19 -> 20 upgrade,
+        # but only when no deterministic Phase 20 index files are present.
+        if self._indexes_db_path.exists():
+            self._open_indexes_catalog()
+        else:
+            has_index_files = self._indexes_dir.exists() and any(
+                child.is_file() and INDEX_FILE_PATTERN.match(child.name)
+                for child in self._indexes_dir.iterdir()
+            )
+            if has_index_files:
+                raise CatalogCorruptionError(
+                    "Persisted index files exist while catalog/indexes.db is missing."
+                )
+            self._bootstrap_indexes_catalog()
 
         # 1. Scan tables.db: find exactly one header record (table_id == 0) and user tables
         headers: List[tuple[RecordId, Tuple]] = []
@@ -315,6 +364,72 @@ class Catalog:
 
         live_table_max = max(user_tables.keys(), default=0)
         self._hwm = max(persisted_hwm, live_table_max, physical_table_max)
+        self._load_index_metadata()
+
+    def _open_indexes_catalog(self) -> None:
+        self._indexes_dir.mkdir(parents=True, exist_ok=True)
+        self._indexes_pf = PageFile(self._indexes_db_path)
+        self._indexes_bpm = BufferPoolManager(self._indexes_pf, pool_size=5)
+        self._indexes_heap = HeapFile(self._indexes_bpm)
+
+    def _load_index_metadata(self) -> None:
+        """Recover, validate, and cache persistent index descriptors."""
+        headers: List[tuple[RecordId, Tuple]] = []
+        ids: Dict[int, IndexMetadata] = {}
+        names: Dict[str, int] = {}
+        for rid, raw in self._indexes_heap.scan_records():
+            try:
+                row = self._indexes_serializer.deserialize(raw)
+            except Exception as exc:
+                raise CatalogCorruptionError(f"Corrupted record in indexes.db at {rid}: {exc}") from exc
+            index_id, name, table_id, ordinal, type_name = row.values
+            if index_id == 0:
+                headers.append((rid, row))
+                continue
+            if index_id <= 0 or not isinstance(name, str) or not TABLE_NAME_PATTERN.match(name) or name.startswith("_"):
+                raise CatalogCorruptionError("Invalid index metadata identity in indexes.db.")
+            if index_id in ids or name.lower() in names:
+                raise CatalogCorruptionError("Duplicate index ID or case-insensitive name in indexes.db.")
+            if table_id not in [meta.table_id for meta in self._tables_meta.values()]:
+                raise CatalogCorruptionError(f"Index '{name}' references missing table ID {table_id}.")
+            owner = next(meta for meta in self._tables_meta.values() if meta.table_id == table_id)
+            if type(ordinal) is not int or ordinal < 0 or ordinal >= owner.schema.column_count:
+                raise CatalogCorruptionError(f"Index '{name}' has invalid column ordinal {ordinal}.")
+            try:
+                key_type = DataType(type_name)
+            except (TypeError, ValueError) as exc:
+                raise CatalogCorruptionError(f"Index '{name}' has invalid key type {type_name!r}.") from exc
+            if key_type not in (DataType.INTEGER, DataType.BIGINT, DataType.BOOLEAN, DataType.VARCHAR):
+                raise CatalogCorruptionError(f"Index '{name}' has unsupported persisted key type {key_type.value}.")
+            if owner.schema[ordinal].data_type != key_type:
+                raise CatalogCorruptionError(f"Index '{name}' key type does not match its table column.")
+            path = self._indexes_dir / f"index_{index_id}.db"
+            if not path.exists():
+                raise CatalogCorruptionError(f"Physical index file '{path}' is missing for index '{name}'.")
+            metadata = IndexMetadata(index_id, name, table_id, ordinal, key_type, rid)
+            ids[index_id] = metadata
+            names[name.lower()] = index_id
+            self._indexes_meta[name.lower()] = metadata
+            self._indexes_by_table.setdefault(table_id, []).append(metadata)
+        if len(headers) != 1:
+            raise CatalogCorruptionError(f"Expected exactly one index catalog header, found {len(headers)}.")
+        self._index_header_rid, header = headers[0]
+        header_value = header[1]
+        if not isinstance(header_value, str) or not header_value.startswith(INDEX_HEADER_PREFIX):
+            raise CatalogCorruptionError("Invalid index catalog version/HWM header.")
+        try:
+            persisted_hwm = int(header_value[len(INDEX_HEADER_PREFIX):])
+            if persisted_hwm < 0:
+                raise ValueError
+        except Exception as exc:
+            raise CatalogCorruptionError("Malformed index catalog HWM.") from exc
+        physical_max = 0
+        if self._indexes_dir.exists():
+            for child in self._indexes_dir.iterdir():
+                match = INDEX_FILE_PATTERN.match(child.name) if child.is_file() else None
+                if match:
+                    physical_max = max(physical_max, int(match.group(1)))
+        self._index_hwm = max(persisted_hwm, max(ids, default=0), physical_max)
 
     def _on_table_close(self, table: Table) -> None:
         """Internal callback invoked when a Table is manually closed."""
@@ -439,9 +554,95 @@ class Catalog:
         pf = PageFile(tbl_path)
         bpm = BufferPoolManager(pf, pool_size=self._default_pool_size)
         hf = HeapFile(bpm)
-        tbl = Table(meta.table_id, meta.name, meta.schema, hf, on_close=self._on_table_close)
+        bindings: list[TableIndex] = []
+        try:
+            for index in self._indexes_by_table.get(meta.table_id, []):
+                tree = BPlusTree.open(
+                    self._indexes_dir / f"index_{index.index_id}.db",
+                    index.key_type,
+                    pool_size=self._default_pool_size,
+                )
+                bindings.append(TableIndex(index.index_id, index.name, index.column_ordinal, index.key_type, tree))
+            tbl = Table(meta.table_id, meta.name, meta.schema, hf, on_close=self._on_table_close, indexes=bindings)
+        except Exception as exc:
+            for binding in bindings:
+                binding.tree.close()
+            bpm.close()
+            pf.close()
+            if isinstance(exc, (BPlusTreeError, StorageCorruptionError)):
+                raise CatalogCorruptionError(f"Cannot open index for table '{meta.name}': {exc}") from exc
+            raise
         self._open_tables[lower_name] = tbl
         return tbl
+
+    def _write_index_header(self) -> None:
+        if self._index_header_rid is not None:
+            self._indexes_heap.delete_record(self._index_header_rid)
+        header = Tuple([0, f"{INDEX_HEADER_PREFIX}{self._index_hwm}", None, None, None], SYSTEM_INDEXES_SCHEMA)
+        self._index_header_rid = self._indexes_heap.insert_record(self._indexes_serializer.serialize(header))
+        self._indexes_bpm.flush_all()
+
+    def create_index(self, index_name: str, table_name: str, column_name: str) -> None:
+        """Create and backfill a persistent non-unique single-column index."""
+        self._check_not_closed()
+        if not isinstance(index_name, str) or not TABLE_NAME_PATTERN.match(index_name) or index_name.startswith("_"):
+            raise CatalogError(f"Invalid index name '{index_name}'.")
+        if index_name.lower() in self._indexes_meta:
+            raise IndexAlreadyExistsError(f"Index '{index_name}' already exists case-insensitively.")
+        table = self.get_table(table_name)
+        try:
+            ordinal = table.schema.column_index(column_name)
+        except Exception:
+            raise
+        key_type = table.schema[ordinal].data_type
+        if key_type not in (DataType.INTEGER, DataType.BIGINT, DataType.BOOLEAN, DataType.VARCHAR):
+            raise UnsupportedIndexTypeError(f"Data type {key_type.value} cannot be indexed.")
+        candidate = self._index_hwm + 1
+        while (self._indexes_dir / f"index_{candidate}.db").exists():
+            candidate += 1
+        path = self._indexes_dir / f"index_{candidate}.db"
+        tree: Optional[BPlusTree] = None
+        index_rid: Optional[RecordId] = None
+        published = False
+        try:
+            tree = BPlusTree.create(path, key_type, pool_size=self._default_pool_size)
+            for rid, row in table.scan():
+                value = row[ordinal]
+                if value is not None:
+                    tree.insert(value, rid)
+            record = Tuple([candidate, index_name, table.table_id, ordinal, key_type.value], SYSTEM_INDEXES_SCHEMA)
+            index_rid = self._indexes_heap.insert_record(self._indexes_serializer.serialize(record))
+            self._indexes_bpm.flush_all()
+            self._index_hwm = candidate
+            self._write_index_header()
+            metadata = IndexMetadata(candidate, index_name, table.table_id, ordinal, key_type, index_rid)
+            self._indexes_meta[index_name.lower()] = metadata
+            self._indexes_by_table.setdefault(table.table_id, []).append(metadata)
+            published = True
+            table._attach_index(TableIndex(candidate, index_name, ordinal, key_type, tree))
+            tree = None  # ownership transferred to Table
+        except Exception:
+            if published:
+                self._indexes_meta.pop(index_name.lower(), None)
+                table_indexes = self._indexes_by_table.get(table.table_id, [])
+                self._indexes_by_table[table.table_id] = [item for item in table_indexes if item.index_id != candidate]
+            if index_rid is not None:
+                try:
+                    self._indexes_heap.delete_record(index_rid)
+                    self._indexes_bpm.flush_all()
+                except Exception:
+                    pass
+            if tree is not None:
+                try:
+                    tree.close()
+                except Exception:
+                    pass
+            if path.exists():
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
+            raise
 
     def has_table(self, name: str) -> bool:
         """Return whether a user table exists by case-insensitive name."""
@@ -485,7 +686,19 @@ class Catalog:
             if lower_name in self._open_tables:
                 del self._open_tables[lower_name]
 
-        # 2. Delete metadata from tables.db and columns.db
+        # 2. Remove owned index metadata before their deterministic files.
+        owned_indexes = list(self._indexes_by_table.get(meta.table_id, []))
+        for index in owned_indexes:
+            self._indexes_heap.delete_record(index.index_rid)
+        self._indexes_bpm.flush_all()
+        for index in owned_indexes:
+            path = self._indexes_dir / f"index_{index.index_id}.db"
+            if path.exists():
+                path.unlink()
+            self._indexes_meta.pop(index.name.lower(), None)
+        self._indexes_by_table.pop(meta.table_id, None)
+
+        # 3. Delete metadata from tables.db and columns.db
         self._tables_heap.delete_record(meta.table_rid)
         self._tables_bpm.flush_all()
 
@@ -493,12 +706,12 @@ class Catalog:
             self._columns_heap.delete_record(c_rid)
         self._columns_bpm.flush_all()
 
-        # 3. Delete physical storage file on disk
+        # 4. Delete physical storage file on disk
         target_file = self._tables_dir / f"table_{meta.table_id}.db"
         if target_file.exists():
             target_file.unlink()
 
-        # 4. Remove from in-memory metadata registry
+        # 5. Remove from in-memory metadata registry
         del self._tables_meta[lower_name]
 
     def close(self) -> None:
@@ -527,6 +740,12 @@ class Catalog:
         try:
             self._columns_bpm.close()
             self._columns_pf.close()
+        except Exception:
+            pass
+
+        try:
+            self._indexes_bpm.close()
+            self._indexes_pf.close()
         except Exception:
             pass
 

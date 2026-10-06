@@ -121,6 +121,10 @@ class StrataEngine:
         """
         return self.catalog.get_table(name)
 
+    def create_index(self, index_name: str, table_name: str, column_name: str) -> None:
+        """Create a persistent programmatic single-column index."""
+        self.catalog.create_index(index_name, table_name, column_name)
+
     def has_table(self, name: str) -> bool:
         """Check if a table exists in the database."""
         if not self.is_open:

@@ -509,6 +509,126 @@ class BPlusTree:
         self._header_dirty = True
         return True
 
+    def delete(self, key: object, record_id: RecordId) -> bool:
+        """Remove one exact ``(key, RecordId)`` pair.
+
+        This intentionally performs only structural cleanup needed to keep
+        routing valid.  It does not merge or redistribute underfull nodes.
+        Detached pages remain allocated in the backing file.
+        """
+        self._check_open()
+        self._validate_key(key)
+        self._validate_record_id(record_id)
+        pair = (key, int(record_id.page_id), record_id.slot_id)
+        leaf_pid, leaf, path = self._find_leaf(pair)
+        position = self._insert_index(leaf.entries, pair)
+        if position == len(leaf.entries) or self._pair(leaf.entries[position]) != pair:
+            return False
+
+        del leaf.entries[position]
+        self._entry_count -= 1
+        if leaf_pid == self._root_page_id:
+            self._write_node(leaf_pid, leaf)
+        elif leaf.entries:
+            self._write_node(leaf_pid, leaf)
+            self._refresh_separators()
+        else:
+            self._unlink_leaf(leaf_pid)
+            self._leaf_page_count -= 1
+            self._detach_child(leaf_pid, path)
+
+        if self._entry_count == 0:
+            self._normalize_empty_root()
+        self._header_dirty = True
+        return True
+
+    def _unlink_leaf(self, leaf_pid: int) -> None:
+        """Bypass ``leaf_pid`` in logical leaf order, never page-id order."""
+        pid = self._root_page_id
+        while True:
+            node = self._read_node(pid)
+            if node.node_type == LEAF:
+                break
+            assert node.children is not None
+            pid = node.children[0]
+        previous: Optional[tuple[int, _Node]] = None
+        while pid != leaf_pid:
+            node = self._read_node(pid)
+            if node.link == NO_PAGE:
+                raise BPlusTreeCorruptionError("Empty leaf is absent from the leaf sibling chain.")
+            previous = (pid, node)
+            pid = node.link
+        removed = self._read_node(leaf_pid)
+        if previous is not None:
+            previous[1].link = removed.link
+            self._write_node(previous[0], previous[1])
+
+    def _detach_child(self, child_pid: int, path: list[int]) -> None:
+        """Remove an empty subtree from ancestors, retaining allocated pages."""
+        while path:
+            parent_pid = path.pop()
+            parent = self._read_node(parent_pid)
+            assert parent.children is not None
+            try:
+                child_index = parent.children.index(child_pid)
+            except ValueError as exc:
+                raise BPlusTreeCorruptionError("Empty child is absent from its parent.") from exc
+            del parent.children[child_index]
+            # Entries are regenerated below from child minima.  A node with no
+            # children cannot be represented as a routing node and is detached.
+            if not parent.children:
+                if parent_pid == self._root_page_id:
+                    return
+                child_pid = parent_pid
+                continue
+            # Internal-node ``link`` is the persisted first-child pointer;
+            # keep it synchronized when removing the leftmost child.
+            parent.link = parent.children[0]
+            parent.entries = [self._subtree_min(child) for child in parent.children[1:]]
+            self._write_node(parent_pid, parent)
+            self._refresh_separators()
+            return
+        # The root has lost its final child; final normalization follows.
+
+    def _refresh_separators(self) -> None:
+        """Recompute reachable internal separators from subtree minima.
+
+        Deletion can change a leftmost minimum that is represented one or more
+        levels up.  Recomputing the small routing frontier avoids stale
+        separators without introducing occupancy balancing.
+        """
+        def refresh(pid: int) -> Optional[_LeafEntry]:
+            node = self._read_node(pid)
+            if node.node_type == LEAF:
+                return node.entries[0] if node.entries else None
+            assert node.children is not None
+            minima = [refresh(child) for child in node.children]
+            if any(value is None for value in minima):
+                raise BPlusTreeCorruptionError("Reachable internal node has an empty child subtree.")
+            entries = [value for value in minima[1:] if value is not None]
+            if node.entries != entries:
+                node.entries = entries
+                self._write_node(pid, node)
+            return minima[0]
+
+        refresh(self._root_page_id)
+
+    def _subtree_min(self, pid: int) -> _LeafEntry:
+        node = self._read_node(pid)
+        while node.node_type == INTERNAL:
+            assert node.children is not None
+            node = self._read_node(node.children[0])
+        if not node.entries:
+            raise BPlusTreeCorruptionError("Non-root B+ tree subtree has an empty leaf.")
+        return node.entries[0]
+
+    def _normalize_empty_root(self) -> None:
+        """Restore the documented empty-tree representation without reclamation."""
+        root = _Node(LEAF, [], NO_PAGE)
+        self._write_node(self._root_page_id, root)
+        self._height = 1
+        self._leaf_page_count = 1
+
     def _propagate_split(self, left_pid: int, separator: _LeafEntry, right_pid: int, path: list[int]) -> None:
         while path:
             parent_pid = path.pop()

@@ -6,6 +6,8 @@ from strata_engine.schema.exceptions import SchemaMismatchError
 from strata_engine.schema.schema import Schema
 from strata_engine.schema.serializer import TupleSerializer
 from strata_engine.schema.tuple import Tuple
+from strata_engine.catalog.index import TableIndex
+from strata_engine.catalog.exceptions import CatalogCorruptionError
 from strata_engine.storage.exceptions import StorageClosedError
 from strata_engine.storage.heap_file import HeapFile
 from strata_engine.storage.record_id import RecordId
@@ -26,6 +28,7 @@ class Table:
         "_serializer",
         "_closed",
         "_on_close",
+        "_indexes",
     )
 
     def __init__(
@@ -35,6 +38,7 @@ class Table:
         schema: Schema,
         heap_file: HeapFile,
         on_close: Optional[Callable[["Table"], None]] = None,
+        indexes: Sequence[TableIndex] = (),
     ) -> None:
         """Initialize a Table instance.
 
@@ -68,6 +72,7 @@ class Table:
         self._serializer: TupleSerializer = TupleSerializer(schema)
         self._closed: bool = False
         self._on_close: Optional[Callable[["Table"], None]] = on_close
+        self._indexes: list[TableIndex] = list(indexes)
 
     @property
     def table_id(self) -> int:
@@ -93,6 +98,16 @@ class Table:
     def is_closed(self) -> bool:
         """Return whether this table instance has been closed."""
         return self._closed or self._heap_file.buffer_pool_manager.is_closed
+
+    @property
+    def indexes(self) -> tuple[TableIndex, ...]:
+        """Open operational index bindings attached to this table."""
+        return tuple(self._indexes)
+
+    def _attach_index(self, index: TableIndex) -> None:
+        """Catalog-internal attachment after successful create/backfill."""
+        self._check_not_closed()
+        self._indexes.append(index)
 
     def _check_not_closed(self) -> None:
         """Raise StorageClosedError if operations are attempted on a closed table."""
@@ -134,7 +149,26 @@ class Table:
             raise TypeError(f"Expected Tuple or Sequence of values, got {type(row).__name__}.")
 
         data = self._serializer.serialize(values)
-        return self._heap_file.insert_record(data)
+        rid = self._heap_file.insert_record(data)
+        inserted: list[tuple[TableIndex, Any]] = []
+        try:
+            for index in self._indexes:
+                value = values[index.column_ordinal]
+                if value is not None:
+                    index.tree.insert(value, rid)
+                    inserted.append((index, value))
+        except Exception:
+            for index, value in reversed(inserted):
+                try:
+                    index.tree.delete(value, rid)
+                except Exception:
+                    pass
+            try:
+                self._heap_file.delete_record(rid)
+            except Exception:
+                pass
+            raise
+        return rid
 
     def get(self, record_id: RecordId) -> Tuple:
         """Retrieve a typed Tuple by its RecordId.
@@ -166,7 +200,34 @@ class Table:
             RecordNotFoundError: If slot is already deleted or unallocated.
         """
         self._check_not_closed()
-        self._heap_file.delete_record(record_id)
+        row = self.get(record_id)
+        removed: list[tuple[TableIndex, Any]] = []
+        try:
+            for index in self._indexes:
+                value = row[index.column_ordinal]
+                if value is None:
+                    continue
+                if not index.tree.delete(value, record_id):
+                    raise CatalogCorruptionError(
+                        f"Index '{index.name}' lacks expected entry for record {record_id}."
+                    )
+                removed.append((index, value))
+        except Exception:
+            for index, value in removed:
+                try:
+                    index.tree.insert(value, record_id)
+                except Exception:
+                    pass
+            raise
+        try:
+            self._heap_file.delete_record(record_id)
+        except Exception:
+            for index, value in removed:
+                try:
+                    index.tree.insert(value, record_id)
+                except Exception:
+                    pass
+            raise
 
     def scan(self) -> Iterator[PyTuple[RecordId, Tuple]]:
         """Iterate over all active typed records in the table.
@@ -197,6 +258,11 @@ class Table:
 
         self._closed = True
         try:
+            for index in self._indexes:
+                try:
+                    index.tree.close()
+                except Exception:
+                    pass
             bpm = self._heap_file.buffer_pool_manager
             if not bpm.is_closed:
                 bpm.close()

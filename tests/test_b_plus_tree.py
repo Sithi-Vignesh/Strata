@@ -67,6 +67,39 @@ def test_strict_keys_duplicate_pairs_and_ranges(tmp_path: Path) -> None:
         tree.validate_structure()
 
 
+def test_exact_delete_duplicate_leaf_cleanup_and_reopen(tmp_path: Path) -> None:
+    path = tmp_path / "delete.bpt"
+    rids = [RecordId(page, 0) for page in range(300)]
+    with BPlusTree.create(path, DataType.INTEGER, pool_size=1) as tree:
+        for rid in rids:
+            assert tree.insert(7, rid)
+        allocated = tree.tree_page_count
+        assert tree.delete(7, rids[100])
+        assert not tree.delete(7, rids[100])
+        assert rids[100] not in tree.search(7)
+        # The initial split puts RecordId(93, 0) in the right leaf.  Removing
+        # the preceding entries detaches the leftmost leaf, which must not
+        # leave its old separator/routing slot behind.
+        for rid in rids[:93]:
+            assert tree.delete(7, rid)
+        tree.validate_structure()
+        assert rids[93] in tree.search(7)
+        assert tree.scan_range() == tuple((7, rid) for rid in rids[93:] if rid != rids[100])
+        assert tree.delete(7, rids[93])
+        for rid in rids[94:]:
+            if rid != rids[100]:
+                assert tree.delete(7, rid)
+        assert tree.entry_count == 0
+        assert tree.height == 1
+        assert tree.leaf_page_count == 1
+        assert tree.tree_page_count == allocated
+        assert tree.scan_range() == ()
+        tree.validate_structure()
+    with BPlusTree.open(path, DataType.INTEGER, pool_size=1) as tree:
+        assert tree.search(7) == ()
+        tree.validate_structure()
+
+
 def test_leaf_splits_duplicate_keys_persistence_and_small_pool(tmp_path: Path) -> None:
     path = tmp_path / "split.bpt"
     expected = tuple(RecordId(page, 0) for page in range(260))

@@ -6,9 +6,9 @@ Strata is built bottom-up—storage first, then relational data, query execution
 
 ## Status
 
-**Phase 19 — Persistent B+ tree core is implemented.** The storage layer now provides a durable, page-backed `BPlusTree` for INTEGER, BIGINT, BOOLEAN, and VARCHAR keys mapped to `RecordId` values. It is not yet attached to Catalog, Table, SQL, or query planning.
+**Phase 20 — Index lifecycle and table integration is implemented.** Catalog-backed persistent single-column, non-unique indexes use durable B+ trees for INTEGER, BIGINT, BOOLEAN, and VARCHAR keys. Existing rows are backfilled, `NULL` values are skipped, Table inserts/deletes maintain exact `(key, RecordId)` entries, reopen reconstructs indexes, and `DROP TABLE` removes owned index files. Exact deletion performs required separator and empty-node cleanup without rebalancing. Indexes are not yet used for SELECT planning, and there is no SQL `CREATE INDEX` or `DROP INDEX`.
 
-Phase 13’s authoritative baseline was **472 passed**, **2 known third-party deprecation warnings**, and **0 failures**. Run the repository test suite to verify the current Phase 14 working tree.
+Phase 19’s authoritative baseline was **546 passed**, **2 known third-party warnings**, and **0 failures**. Run the repository test suite to verify this Phase 20 working tree.
 
 ### Completed phase history
 
@@ -34,6 +34,7 @@ Phase 13’s authoritative baseline was **472 passed**, **2 known third-party de
 | 17 — Minimal SQL CREATE TABLE | Persistent table creation through the existing schema and catalog path. |
 | 18 — Minimal SQL DROP TABLE | Persistent table deletion through the existing catalog path. |
 | 19 — Persistent B+ Tree Core | Dedicated persistent B+ tree files with typed keys, duplicate RecordId entries, splits, leaf links, range scans, and deterministic traversal metrics. |
+| 20 — Index Lifecycle & Table Integration | Catalog-backed persistent single-column indexes, backfill, row-level maintenance, reopen, and DROP TABLE cleanup. |
 
 ## Current architecture
 

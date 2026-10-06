@@ -19,5 +19,13 @@ class TableAlreadyExistsError(CatalogError):
     """Raised when attempting to create a table with a name that already exists."""
 
 
+class IndexAlreadyExistsError(CatalogError):
+    """Raised when an index name already exists case-insensitively."""
+
+
+class UnsupportedIndexTypeError(CatalogError):
+    """Raised when attempting to index a type without B+ tree support."""
+
+
 class ReservedNameError(CatalogError):
     """Raised when attempting to create a user table with a reserved system name."""

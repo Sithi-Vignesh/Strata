@@ -8,11 +8,14 @@ from strata_engine.catalog.catalog import Catalog
 from strata_engine.catalog.exceptions import (
     CatalogCorruptionError,
     CatalogError,
+    IndexAlreadyExistsError,
     ReservedNameError,
     TableAlreadyExistsError,
     TableNotFoundError,
+    UnsupportedIndexTypeError,
 )
 from strata_engine.catalog.table import Table
+from strata_engine.catalog.index import IndexMetadata, TableIndex
 
 __all__ = [
     "Catalog",
@@ -22,4 +25,8 @@ __all__ = [
     "TableNotFoundError",
     "TableAlreadyExistsError",
     "ReservedNameError",
+    "IndexAlreadyExistsError",
+    "UnsupportedIndexTypeError",
+    "IndexMetadata",
+    "TableIndex",
 ]
