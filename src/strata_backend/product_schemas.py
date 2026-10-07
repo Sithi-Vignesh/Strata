@@ -15,9 +15,10 @@ class _ResponseModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class CreateUser(_RequestModel):
+class RegisterAccount(_RequestModel):
     name: str
     email: str
+    password: str
 
 
 class UpdateUser(_RequestModel):

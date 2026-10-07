@@ -89,3 +89,14 @@ class CreatedSession:
 
     session: Session
     token: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredAccount:
+    """Internal result of successful account and personal-workspace provisioning."""
+
+    user: User
+    workspace: Workspace
+    personal_project: Project
+    session: Session
+    token: str

@@ -23,7 +23,7 @@ def test_product_storage_is_created_only_during_lifespan(tmp_path) -> None:
         assert client.get("/api/users/1").status_code == 200
 
 
-def test_product_api_user_workspace_and_health_contract(tmp_path) -> None:
+def test_product_api_registration_workspace_and_health_contract(tmp_path) -> None:
     with TestClient(_app(tmp_path)) as client:
         health = client.get("/health")
         assert health.status_code == 200
@@ -33,7 +33,10 @@ def test_product_api_user_workspace_and_health_contract(tmp_path) -> None:
             "engine": {"name": "StrataEngine", "status": "open", "initialized": True},
         }
 
-        created = client.post("/api/users", json={"name": "Ada", "email": "ada@strata.local"})
+        created = client.post(
+            "/api/auth/register",
+            json={"name": "Ada", "email": "ada@strata.local", "password": "correct horse battery staple"},
+        )
         assert created.status_code == 201
         assert created.json() == {
             "id": 2, "name": "Ada", "email": "ada@strata.local",
@@ -42,21 +45,28 @@ def test_product_api_user_workspace_and_health_contract(tmp_path) -> None:
         assert client.get("/api/users/2").json() == created.json()
         assert client.patch("/api/users/2", json={"name": "Ada Lovelace"}).json()["name"] == "Ada Lovelace"
 
-        duplicate = client.post("/api/users", json={"name": "Again", "email": "ADA@STRATA.LOCAL"})
+        duplicate = client.post(
+            "/api/auth/register",
+            json={"name": "Again", "email": "ADA@STRATA.LOCAL", "password": "correct horse battery staple"},
+        )
         assert duplicate.status_code == 409
         assert _detail(duplicate)["code"] == "PRODUCT_CONFLICT"
         missing = client.get("/api/users/999")
         assert missing.status_code == 404
         assert _detail(missing)["code"] == "PRODUCT_NOT_FOUND"
-        assert client.post("/api/users", json={"name": "Extra", "email": "extra@strata.local", "role": "X"}).status_code == 422
+        assert client.post(
+            "/api/auth/register",
+            json={"name": "Extra", "email": "extra@strata.local", "password": "correct horse battery staple", "role": "X"},
+        ).status_code == 422
+        assert client.post("/api/users", json={"name": "No", "email": "no@strata.local"}).status_code == 404
 
         workspace = client.post("/api/workspaces", json={"name": "Ada Space", "owner_user_id": 2})
         assert workspace.status_code == 201
         assert client.get(f"/api/workspaces/{workspace.json()['id']}").json() == workspace.json()
-        assert client.get("/api/users/2/workspaces").json() == [workspace.json()]
+        assert workspace.json() in client.get("/api/users/2/workspaces").json()
         assert client.patch(f"/api/workspaces/{workspace.json()['id']}", json={"name": "Ada Workspace"}).status_code == 200
         members = client.get(f"/api/workspaces/{workspace.json()['id']}/members")
-        assert members.json() == [{"workspace_id": 2, "user_id": 2, "role": "OWNER"}]
+        assert members.json() == [{"workspace_id": workspace.json()["id"], "user_id": 2, "role": "OWNER"}]
         deleted = client.delete(f"/api/workspaces/{workspace.json()['id']}")
         assert deleted.status_code == 204 and deleted.content == b""
         cors = client.options(
@@ -111,7 +121,10 @@ def test_task_note_routes_patch_semantics_permissions_and_cascade(tmp_path) -> N
         assert client.patch(f"/api/tasks/{task_id}", json={"title": None}).status_code == 422
         assert client.post("/api/projects/1/tasks", json={"title": "No", "project_id": 1}).status_code == 422
 
-        other = client.post("/api/users", json={"name": "Other", "email": "other@strata.local"}).json()
+        other = client.post(
+            "/api/auth/register",
+            json={"name": "Other", "email": "other@strata.local", "password": "correct horse battery staple"},
+        ).json()
         denied = client.patch(f"/api/tasks/{task_id}", json={"assignee_user_id": other["id"]})
         assert denied.status_code == 403
         assert _detail(denied)["code"] == "PRODUCT_PERMISSION_DENIED"
@@ -136,11 +149,16 @@ def test_task_note_routes_patch_semantics_permissions_and_cascade(tmp_path) -> N
 def test_product_api_hides_storage_details_and_persists_across_lifespans(tmp_path) -> None:
     database = tmp_path / "product"
     with TestClient(create_app(data_dir=tmp_path / "demo", product_data_dir=database)) as client:
-        created = client.post("/api/users", json={"name": "Persistent", "email": "persistent@strata.local"})
+        created = client.post(
+            "/api/auth/register",
+            json={"name": "Persistent", "email": "persistent@strata.local", "password": "correct horse battery staple"},
+        )
         assert created.status_code == 201
         payload = created.json()
         assert set(payload) == {"id", "name", "email", "account_state", "created_at", "deleted_at"}
         assert "password_hash" not in payload
+        assert "token_digest" not in payload
+        assert "token" not in payload
         lowered = str(payload).lower()
         assert all(value not in lowered for value in ("rid", "tuple", "page", "slot", "index", "storage"))
 

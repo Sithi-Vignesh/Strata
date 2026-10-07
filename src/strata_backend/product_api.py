@@ -10,9 +10,9 @@ from strata_backend.product_schemas import (
     CreateNote,
     CreateProject,
     CreateTask,
-    CreateUser,
     CreateWorkspace,
     NoteResponse,
+    RegisterAccount,
     ProjectResponse,
     TaskResponse,
     UpdateNote,
@@ -79,9 +79,9 @@ async def _internal_service_error_handler(_: Request, exc: ProductServiceError) 
     )
 
 
-@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def create_user(body: CreateUser, service: ProductService = Depends(get_product_service)) -> object:
-    return service.create_user(body.name, body.email)
+@router.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def register_account(body: RegisterAccount, service: ProductService = Depends(get_product_service)) -> object:
+    return service.register_account(body.name, body.email, body.password).user
 
 
 @router.get("/users/{user_id}", response_model=UserResponse)

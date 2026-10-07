@@ -16,12 +16,14 @@ from strata_backend.product_models import (
     Note,
     Project,
     CreatedSession,
+    RegisteredAccount,
     Session,
     Task,
     User,
     Workspace,
     WorkspaceMember,
 )
+from strata_backend.product_passwords import hash_password
 from strata_backend.product_sessions import SESSION_LIFETIME_MS, generate_session_token, session_token_digest
 from strata_backend.product_time import utc_epoch_milliseconds
 
@@ -48,6 +50,10 @@ class ProductPermissionError(ProductServiceError):
     This represents a domain rule only; authentication and full authorization are
     intentionally outside the current product-service scope.
     """
+
+
+class ProductRegistrationCompensationError(ProductServiceError):
+    """Raised when registration's best-effort reverse compensation is incomplete."""
 
 
 ModelT = TypeVar("ModelT")
@@ -99,24 +105,63 @@ class ProductService:
             user = self._user_for_id(user_id)
             if user.account_state != "ACTIVE":
                 raise ProductPermissionError("Only ACTIVE users can create sessions.")
+            session, token = self._new_session(user.id, self._now())
+            self._table("sessions").insert((
+                session.id, session.user_id, session.token_digest,
+                session.created_at, session.expires_at,
+            ))
+            return CreatedSession(session, token)
+
+    def register_account(self, name: str, email: str, password: str) -> RegisteredAccount:
+        """Provision an account, personal workspace, default project, and initial session.
+
+        This is a process-local, best-effort compensating workflow, not a database
+        transaction or crash-recovery mechanism.
+        """
+        name = self._registration_name(name)
+        email = self._canonical_email(email)
+        try:
+            password_hash = hash_password(password)
+        except ValueError as exc:
+            raise ProductValidationError(str(exc)) from exc
+
+        with self._lock:
+            if self._users_for_email(email):
+                raise ProductConflictError(f"A user with email '{email}' already exists.")
+
             now = self._now()
-            for _ in range(3):
-                token = self._token_factory()
-                try:
-                    digest = session_token_digest(token)
-                except ValueError as exc:
-                    raise ProductValidationError(str(exc)) from exc
-                if self._indexed_records("sessions", "token_digest", digest):
-                    continue
-                session = Session(
-                    self._next_id("sessions"), user.id, digest, now, now + SESSION_LIFETIME_MS,
-                )
-                self._table("sessions").insert((
+            user = User(self._next_id("users"), name, email, password_hash, "ACTIVE", now, None)
+            workspace = Workspace(self._next_id("workspaces"), "My Workspace", "PERSONAL", now, now)
+            project = Project(self._next_id("projects"), workspace.id, "Personal", None, user.id, now, now)
+            session, token = self._new_session(user.id, now)
+            inserted: list[tuple[str, RecordId]] = []
+            try:
+                inserted.append(("users", self._registration_insert("users", (
+                    user.id, user.name, user.email, user.password_hash,
+                    user.account_state, user.created_at, user.deleted_at,
+                ))))
+                inserted.append(("workspaces", self._registration_insert("workspaces", (
+                    workspace.id, workspace.name, workspace.kind,
+                    workspace.created_at, workspace.updated_at,
+                ))))
+                inserted.append(("workspace_members", self._registration_insert("workspace_members", (
+                    workspace.id, user.id, "OWNER",
+                ))))
+                inserted.append(("projects", self._registration_insert("projects", (
+                    project.id, project.workspace_id, project.name, project.description,
+                    project.created_by_user_id, project.created_at, project.updated_at,
+                ))))
+                inserted.append(("sessions", self._registration_insert("sessions", (
                     session.id, session.user_id, session.token_digest,
                     session.created_at, session.expires_at,
-                ))
-                return CreatedSession(session, token)
-            raise ProductConflictError("Could not allocate a unique session token.")
+                ))))
+            except Exception as exc:
+                if self._compensate_registration(inserted):
+                    raise ProductRegistrationCompensationError(
+                        "Registration compensation did not complete successfully."
+                    ) from exc
+                raise
+            return RegisteredAccount(user, workspace, project, session, token)
 
     def find_session_by_token(self, token: str) -> Session | None:
         """Resolve an unexpired persisted session by its raw opaque token."""
@@ -420,6 +465,24 @@ class ProductService:
             raise ProductServiceError("ProductService cannot use a closed StrataEngine.")
         return self._engine.get_table(name)
 
+    def _registration_insert(self, table_name: str, values: tuple[object, ...]) -> RecordId:
+        """Focused persistence seam for the registration workflow."""
+        return self._table(table_name).insert(values)
+
+    def _registration_delete(self, table_name: str, record_id: RecordId) -> None:
+        """Focused inverse-persistence seam for registration compensation."""
+        self._table(table_name).delete(record_id)
+
+    def _compensate_registration(self, inserted: list[tuple[str, RecordId]]) -> bool:
+        """Attempt every inverse in reverse write order; return whether any failed."""
+        failed = False
+        for table_name, record_id in reversed(inserted):
+            try:
+                self._registration_delete(table_name, record_id)
+            except Exception:
+                failed = True
+        return failed
+
     def _next_id(self, table_name: str) -> int:
         values = [row[0] for _, row in self._table(table_name).scan()]
         return 1 if not values else max(values) + 1
@@ -443,6 +506,22 @@ class ProductService:
 
     def _users_for_email(self, email: str) -> tuple[User, ...]:
         return tuple(self._user(row) for _, row in self._indexed_records("users", "email", email))
+
+    def _new_session(self, user_id: int, now: int) -> tuple[Session, str]:
+        """Allocate session metadata and raw token under the service lock."""
+        for _ in range(3):
+            token = self._token_factory()
+            try:
+                digest = session_token_digest(token)
+            except ValueError as exc:
+                raise ProductValidationError(str(exc)) from exc
+            if self._indexed_records("sessions", "token_digest", digest):
+                continue
+            return (
+                Session(self._next_id("sessions"), user_id, digest, now, now + SESSION_LIFETIME_MS),
+                token,
+            )
+        raise ProductConflictError("Could not allocate a unique session token.")
 
     def _workspace_for_id(self, workspace_id: int) -> Workspace:
         return self._required("workspaces", workspace_id, self._workspace)
@@ -546,6 +625,17 @@ class ProductService:
         if len(email) > 254:
             raise ProductValidationError("email must not exceed 254 characters.")
         return email
+
+    @staticmethod
+    def _registration_name(value: str) -> str:
+        if not isinstance(value, str):
+            raise ProductValidationError("name must be a string.")
+        name = value.strip()
+        if not name:
+            raise ProductValidationError("name must not be empty.")
+        if len(name) > 96:
+            raise ProductValidationError("name must not exceed 96 characters.")
+        return name
 
     @staticmethod
     def _optional_text(name: str, value: str | None) -> str | None:
