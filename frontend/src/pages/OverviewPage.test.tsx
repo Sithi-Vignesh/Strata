@@ -1,40 +1,21 @@
 import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { getTaskStatusSummary } from "../api/tasks";
+import { describe, expect, it, vi } from "vitest";
 import { OverviewPage } from "./OverviewPage";
 
-vi.mock("../api/tasks", () => ({ getTaskStatusSummary: vi.fn() }));
-
-const summaryMock = vi.mocked(getTaskStatusSummary);
-
-afterEach(() => {
-  vi.resetAllMocks();
-});
+vi.mock("../app/ProductContext", () => ({ useProduct: vi.fn() }));
+import { useProduct } from "../app/ProductContext";
 
 describe("OverviewPage", () => {
-  it("shows loading before the real summary resolves", () => {
-    summaryMock.mockReturnValue(new Promise(() => undefined));
-
+  it("derives three product status metrics from canonical tasks", () => {
+    vi.mocked(useProduct).mockReturnValue(productState([{ id: 1, status: "TODO" }, { id: 2, status: "DONE" }]) as never);
     render(<OverviewPage />);
-
-    expect(screen.getByText("Loading workspace summary…")).toBeInTheDocument();
-  });
-
-  it("renders database-derived summary values", async () => {
-    summaryMock.mockResolvedValue({ TODO: 200, IN_PROGRESS: 200, REVIEW: 200, BLOCKED: 200, DONE: 200 });
-
-    render(<OverviewPage />);
-
-    expect(await screen.findByText("1000")).toBeInTheDocument();
-    expect(screen.getAllByText("200")).toHaveLength(8);
-    expect(screen.getByRole("heading", { name: "Work by status" })).toBeInTheDocument();
-  });
-
-  it("shows a truthful error state", async () => {
-    summaryMock.mockRejectedValue(new Error("backend unavailable"));
-
-    render(<OverviewPage />);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to load workspace data");
+    expect(screen.getByText("Total tasks").nextSibling).toHaveTextContent("2");
+    expect(screen.getAllByText("To do")[0]?.nextSibling).toHaveTextContent("1");
+    expect(screen.queryByText("Review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Blocked")).not.toBeInTheDocument();
   });
 });
+
+function productState(tasks: Array<{ id: number; status: "TODO" | "DONE" }>) {
+  return { tasks: tasks.map((task) => ({ ...task, project_id: 1, title: "Task", description: null, priority: "HIGH" as const, assignee_user_id: null })), selectedWorkspaceId: 1, selectedProjectId: 1, status: "ready" as const, retry: vi.fn() };
+}

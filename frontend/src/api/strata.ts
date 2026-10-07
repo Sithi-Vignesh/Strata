@@ -23,8 +23,13 @@ export async function executeSqlProfile(sql: string): Promise<SqlProfileResponse
   });
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch {
+    throw new StrataApiError(0, "NETWORK_ERROR", "Could not reach the Strata backend.");
+  }
   const payload = await parseJsonSafely(response);
 
   if (!response.ok) {
@@ -48,6 +53,9 @@ async function parseJsonSafely(response: Response): Promise<unknown> {
 }
 
 function extractErrorDetail(payload: unknown): { code: string; message: string } | undefined {
+  if (isRecord(payload) && Array.isArray(payload.detail)) {
+    return { code: "REQUEST_VALIDATION_ERROR", message: "The request was invalid." };
+  }
   if (!isRecord(payload) || !isRecord(payload.detail)) {
     return undefined;
   }

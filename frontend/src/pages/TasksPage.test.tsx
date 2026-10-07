@@ -1,40 +1,20 @@
 import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { getTasks } from "../api/tasks";
+import { describe, expect, it, vi } from "vitest";
 import { TasksPage } from "./TasksPage";
 
-vi.mock("../api/tasks", () => ({ getTasks: vi.fn() }));
-
-const tasksMock = vi.mocked(getTasks);
-
-afterEach(() => {
-  vi.resetAllMocks();
-});
+vi.mock("../app/ProductContext", () => ({ useProduct: vi.fn() }));
+import { useProduct } from "../app/ProductContext";
 
 describe("TasksPage", () => {
-  it("shows loading before rows resolve", () => {
-    tasksMock.mockReturnValue(new Promise(() => undefined));
-
+  it("renders resolved member names and clean unassigned tasks", () => {
+    vi.mocked(useProduct).mockReturnValue({ tasks: [
+      { id: 1, project_id: 1, title: "Assigned", description: null, status: "TODO", priority: "HIGH", assignee_user_id: 1 },
+      { id: 2, project_id: 1, title: "Unassigned", description: null, status: "DONE", priority: "LOW", assignee_user_id: null },
+    ], memberUsers: { 1: { id: 1, name: "Sithi", email: "sithi@strata.local" } }, selectedWorkspaceId: 1, selectedProjectId: 1, status: "ready", retry: vi.fn() } as never);
     render(<TasksPage />);
-
-    expect(screen.getByText("Loading tasks…")).toBeInTheDocument();
-  });
-
-  it("renders formatted real task attributes", async () => {
-    tasksMock.mockResolvedValue([{ id: 1, title: "Implement storage task 001", status: "IN_PROGRESS", priority: "HIGH", assignee: null, project: "Strata Engine" }]);
-
-    render(<TasksPage />);
-
-    expect(await screen.findByText("#001")).toBeInTheDocument();
-    expect(screen.getByText("In progress")).toBeInTheDocument();
-    expect(screen.getByText("Unassigned")).toBeInTheDocument();
-  });
-
-  it("shows a truthful error state", async () => {
-    tasksMock.mockRejectedValue(new Error("backend unavailable"));
-
-    render(<TasksPage />);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to load workspace data");
+    expect(screen.getByText("Sithi")).toBeInTheDocument();
+    expect(screen.getAllByText("Unassigned")).toHaveLength(2);
+    expect(screen.getByText("To do")).toBeInTheDocument();
+    expect(screen.queryByText("Urgent")).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { getHealth } from "../../api/strata";
+import { useProduct } from "../../app/ProductContext";
 import { NavIcon, type NavIconName } from "../icons/NavIcon";
 
 type ConnectionState = "checking" | "connected" | "unavailable";
@@ -73,6 +74,7 @@ export function AppShell() {
 
       <aside className="sticky top-0 hidden h-svh w-64 shrink-0 flex-col border-r border-[var(--strata-border)] bg-[var(--strata-surface)] md:flex">
         <div className="px-6 py-6"><Wordmark /></div>
+        <WorkspaceSelector />
         <nav aria-label="Primary navigation" className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
           {navigation.map((group) => (
             <section className="mt-6 first:mt-0" key={group.label}>
@@ -98,6 +100,22 @@ export function AppShell() {
 
 function Wordmark() {
   return <Link className="text-sm font-bold tracking-[0.16em] text-[var(--strata-text)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--strata-accent)]" to="/">STRATA</Link>;
+}
+
+function WorkspaceSelector() {
+  const { workspaces, projects, selectedWorkspaceId, selectedProjectId, selectWorkspace, selectProject, status } = useProduct();
+  return (
+    <div className="px-6 pb-2">
+      <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]" htmlFor="workspace-selector">Workspace</label>
+      <select className="mt-1 w-full rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)] px-2 py-1.5 text-xs text-[var(--strata-text)] disabled:opacity-60" disabled={status === "loading" || workspaces.length === 0} id="workspace-selector" onChange={(event) => selectWorkspace(Number(event.target.value))} value={selectedWorkspaceId ?? ""}>
+        {workspaces.length === 0 ? <option value="">No workspaces</option> : workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+      </select>
+      <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]" htmlFor="project-selector">Project</label>
+      <select className="mt-1 w-full rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)] px-2 py-1.5 text-xs text-[var(--strata-text)] disabled:opacity-60" disabled={status === "loading" || projects.length === 0} id="project-selector" onChange={(event) => selectProject(Number(event.target.value))} value={selectedProjectId ?? ""}>
+        {projects.length === 0 ? <option value="">No projects</option> : projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+      </select>
+    </div>
+  );
 }
 
 function NavigationLink({ item }: { item: { to: string; label: string; icon: NavIconName } }) {

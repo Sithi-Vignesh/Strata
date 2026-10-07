@@ -34,4 +34,14 @@ describe("application routing", () => {
     });
     expect(screen.getAllByText("Backend: Connected")).toHaveLength(2);
   });
+
+  it("keeps technical routes available when product initialization fails", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path === "/health") return Promise.resolve(new Response(JSON.stringify({ status: "ok", service: "strata_backend", engine: { name: "StrataEngine", status: "open", initialized: true } })));
+      return Promise.reject(new TypeError("Failed to fetch"));
+    }));
+    const router = createMemoryRouter(routes, { initialEntries: ["/engine"] });
+    render(<RouterProvider router={router} />);
+    expect(await screen.findByRole("heading", { name: "Strata Database Engine" })).toBeInTheDocument();
+  });
 });

@@ -1,9 +1,9 @@
-import type { Task } from "../../types/task";
+import type { Task, User } from "../../types/product";
 import { PriorityBadge } from "./PriorityBadge";
 import { StatusBadge } from "./StatusBadge";
 import { formatTaskId } from "./taskPresentation";
 
-export function TaskTable({ tasks }: { tasks: Task[] }) {
+export function TaskTable({ tasks, memberUsers }: { tasks: Task[]; memberUsers: Record<number, User> }) {
   return (
     <div className="mt-6 overflow-x-auto rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)]">
       <table className="min-w-[48rem] w-full border-collapse text-left text-sm">
@@ -14,7 +14,6 @@ export function TaskTable({ tasks }: { tasks: Task[] }) {
             <th className="px-4 py-3 font-semibold" scope="col">Status</th>
             <th className="px-4 py-3 font-semibold" scope="col">Priority</th>
             <th className="px-4 py-3 font-semibold" scope="col">Assignee</th>
-            <th className="px-4 py-3 font-semibold" scope="col">Project</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--strata-border)]">
@@ -24,8 +23,7 @@ export function TaskTable({ tasks }: { tasks: Task[] }) {
               <td className="px-4 py-3 font-medium text-[var(--strata-text)]">{task.title}</td>
               <td className="whitespace-nowrap px-4 py-3"><StatusBadge status={task.status} /></td>
               <td className="whitespace-nowrap px-4 py-3"><PriorityBadge priority={task.priority} /></td>
-              <td className="whitespace-nowrap px-4 py-3 text-[var(--strata-muted)]">{task.assignee ?? "Unassigned"}</td>
-              <td className="whitespace-nowrap px-4 py-3 text-[var(--strata-muted)]">{task.project}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-[var(--strata-muted)]">{task.assignee_user_id === null ? "Unassigned" : (memberUsers[task.assignee_user_id]?.name ?? "Unknown member")}</td>
             </tr>
           ))}
         </tbody>

@@ -1,10 +1,8 @@
-import type { TaskPriority, TaskStatus } from "../../types/task";
+import type { TaskPriority, TaskStatus } from "../../types/product";
 
 const statusLabels: Record<TaskStatus, string> = {
   TODO: "To do",
   IN_PROGRESS: "In progress",
-  REVIEW: "Review",
-  BLOCKED: "Blocked",
   DONE: "Done",
 };
 
@@ -12,7 +10,6 @@ const priorityLabels: Record<TaskPriority, string> = {
   LOW: "Low",
   MEDIUM: "Medium",
   HIGH: "High",
-  URGENT: "Urgent",
 };
 
 export function formatTaskStatus(status: TaskStatus) {
