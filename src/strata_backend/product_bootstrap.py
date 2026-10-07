@@ -62,6 +62,14 @@ NOTES_SCHEMA = Schema([
     Column("updated_at", DataType.BIGINT),
 ])
 
+SESSIONS_SCHEMA = Schema([
+    Column("id", DataType.BIGINT),
+    Column("user_id", DataType.BIGINT),
+    Column("token_digest", DataType.VARCHAR, max_length=64),
+    Column("created_at", DataType.BIGINT),
+    Column("expires_at", DataType.BIGINT),
+])
+
 PRODUCT_SCHEMAS: Mapping[str, Schema] = {
     "users": USERS_SCHEMA,
     "workspaces": WORKSPACES_SCHEMA,
@@ -69,6 +77,7 @@ PRODUCT_SCHEMAS: Mapping[str, Schema] = {
     "projects": PROJECTS_SCHEMA,
     "tasks": TASKS_SCHEMA,
     "notes": NOTES_SCHEMA,
+    "sessions": SESSIONS_SCHEMA,
 }
 
 SEED_TIMESTAMP_MS = 1_700_000_000_000
@@ -91,6 +100,7 @@ PRODUCT_SEED: Mapping[str, tuple[tuple[object, ...], ...]] = {
         (2, 4, 1, "Keep the DBthon demo isolated from the product database.", SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
         (3, 5, 1, "Review the bootstrap contract before adding APIs.", SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
     ),
+    "sessions": (),
 }
 
 PRODUCT_INDEXES: Mapping[str, tuple[str, str]] = {
@@ -101,6 +111,8 @@ PRODUCT_INDEXES: Mapping[str, tuple[str, str]] = {
     "tasks_project_id_idx": ("tasks", "project_id"),
     "tasks_assignee_user_id_idx": ("tasks", "assignee_user_id"),
     "notes_task_id_idx": ("notes", "task_id"),
+    "sessions_token_digest_idx": ("sessions", "token_digest"),
+    "sessions_user_id_idx": ("sessions", "user_id"),
 }
 
 

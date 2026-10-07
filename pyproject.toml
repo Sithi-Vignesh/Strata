@@ -13,6 +13,7 @@ authors = [
     { name = "Strata Team" }
 ]
 dependencies = [
+    "argon2-cffi>=23.1.0",
     "fastapi>=0.110.0",
     "uvicorn>=0.28.0",
 ]

@@ -44,6 +44,7 @@ def test_product_bootstrap_creates_exact_schema_seed_and_indexes(tmp_path: Path)
         assert _rows(engine, "projects")[0][4:] == (1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS)
         assert all(row.values[7:] == (1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS) for _, row in tasks.scan())
         assert all(row.values[4:] == (SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS) for _, row in engine.get_table("notes").scan())
+        assert _rows(engine, "sessions") == ()
 
         actual_indexes = {
             index.name: (table_name, engine.get_table(table_name).schema[index.column_ordinal].name)
@@ -60,6 +61,9 @@ def test_product_bootstrap_creates_exact_schema_seed_and_indexes(tmp_path: Path)
         assert all(row[1] in workspaces and row[4] in users for _, row in engine.get_table("projects").scan())
         assert all(row[1] in projects and (row[6] is None or row[6] in users) and row[7] in users for _, row in tasks.scan())
         assert all(row[1] in tasks_by_id and row[2] in users for _, row in engine.get_table("notes").scan())
+        assert engine.get_table("sessions").schema == PRODUCT_SCHEMAS["sessions"]
+        assert engine.get_table("sessions").index_for_column("token_digest") is not None
+        assert engine.get_table("sessions").index_for_column("user_id") is not None
 
 
 def test_product_bootstrap_is_idempotent_and_indexes_support_product_lookups(tmp_path: Path) -> None:

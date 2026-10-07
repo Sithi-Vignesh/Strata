@@ -6,6 +6,7 @@ import pytest
 
 from strata_backend.product_bootstrap import SEED_TIMESTAMP_MS, bootstrap_product, initialize_product
 from strata_backend.product_models import Note, Task, User
+from strata_backend.product_sessions import SESSION_LIFETIME_MS, session_token_digest
 from strata_backend.product_service import (
     ProductConflictError,
     ProductNotFoundError,
@@ -44,8 +45,10 @@ def test_seeded_read_workflow_returns_logical_models_in_id_order(tmp_path: Path)
 def test_create_user_and_workspace_enforces_uniqueness_and_owner_membership(tmp_path: Path) -> None:
     engine, service = _service(tmp_path)
     try:
-        user = service.create_user("Ada", "ada@strata.local")
+        user = service.create_user("Ada", "  Ada@Strata.Local  ")
         assert user.id == 2
+        assert user.email == "ada@strata.local"
+        assert engine.get_table("users").get(next(rid for rid, row in engine.get_table("users").scan() if row[0] == user.id))[2] == "ada@strata.local"
         assert service.get_user(2) == user
         with pytest.raises(ProductConflictError):
             service.create_user("Ada Again", "ADA@STRATA.LOCAL")
@@ -53,6 +56,8 @@ def test_create_user_and_workspace_enforces_uniqueness_and_owner_membership(tmp_
             service.create_user(" ", "new@strata.local")
         with pytest.raises(ProductValidationError):
             service.create_user("Valid", " ")
+        with pytest.raises(ProductValidationError):
+            service.create_user("Valid", "a" * 255)
         workspace = service.create_workspace("Ada Space", user.id)
         assert workspace.id == 2
         assert service.list_workspace_members(workspace.id)[0].user_id == user.id
@@ -63,6 +68,58 @@ def test_create_user_and_workspace_enforces_uniqueness_and_owner_membership(tmp_
             service.create_workspace(" ", user.id)
     finally:
         engine.close()
+
+
+def test_sessions_are_opaque_indexed_expiring_and_revocable(tmp_path: Path) -> None:
+    clock = [1_800_000_000_000]
+    tokens = iter(("token-one", "token-one", "token-two", "token-three"))
+    engine = StrataEngine(tmp_path / "strata").open()
+    try:
+        bootstrap_product(engine)
+        service = ProductService(engine, clock=lambda: clock[0], token_factory=lambda: next(tokens))
+        created = service.create_session(1)
+
+        assert created.token == "token-one"
+        assert created.session.user_id == 1
+        assert created.session.created_at == clock[0]
+        assert created.session.expires_at == clock[0] + SESSION_LIFETIME_MS
+        assert created.session.token_digest == session_token_digest(created.token)
+        rows = tuple(row.values for _, row in engine.get_table("sessions").scan())
+        assert rows == ((1, 1, session_token_digest("token-one"), clock[0], clock[0] + SESSION_LIFETIME_MS),)
+        assert all(created.token not in row for row in rows)
+        assert service.find_session_by_token(created.token) == created.session
+        assert service.find_session_by_token("missing") is None
+
+        collision_retried = service.create_session(1)
+        assert collision_retried.token == "token-two"
+
+        service.revoke_session(created.session.id)
+        service.revoke_session(collision_retried.session.id)
+        assert service.find_session_by_token(created.token) is None
+
+        expired = service.create_session(1)
+        clock[0] = expired.session.expires_at
+        assert service.find_session_by_token(expired.token) is None
+        assert engine.get_table("sessions").count() == 0
+    finally:
+        engine.close()
+
+
+def test_session_creation_requires_active_existing_user_and_survives_reopen(tmp_path: Path) -> None:
+    database = tmp_path / "strata"
+    with StrataEngine(database) as engine:
+        bootstrap_product(engine)
+        service = ProductService(engine, clock=lambda: 1_800_000_000_000, token_factory=lambda: "persistent-token")
+        with pytest.raises(ProductNotFoundError):
+            service.create_session(999)
+        engine.get_table("users").insert((99, "Pending", "pending@strata.local", None, "PENDING_DELETION", 1, None))
+        with pytest.raises(ProductPermissionError):
+            service.create_session(99)
+        created = service.create_session(1)
+
+    with StrataEngine(database) as engine:
+        bootstrap_product(engine)
+        assert ProductService(engine, clock=lambda: 1_800_000_000_001).find_session_by_token("persistent-token") == created.session
 
 
 def test_project_task_and_note_enforce_relationship_and_domain_rules(tmp_path: Path) -> None:

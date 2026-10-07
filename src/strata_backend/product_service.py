@@ -15,11 +15,14 @@ from strata_backend.product_models import (
     WORKSPACE_ROLES,
     Note,
     Project,
+    CreatedSession,
+    Session,
     Task,
     User,
     Workspace,
     WorkspaceMember,
 )
+from strata_backend.product_sessions import SESSION_LIFETIME_MS, generate_session_token, session_token_digest
 from strata_backend.product_time import utc_epoch_milliseconds
 
 
@@ -66,20 +69,79 @@ class ProductService:
     guarantee, database lock, 2PL, MVCC, or cross-process synchronization.
     """
 
-    def __init__(self, engine: StrataEngine, *, clock: Callable[[], int] = utc_epoch_milliseconds) -> None:
+    def __init__(
+        self,
+        engine: StrataEngine,
+        *,
+        clock: Callable[[], int] = utc_epoch_milliseconds,
+        token_factory: Callable[[], str] = generate_session_token,
+    ) -> None:
         if not isinstance(engine, StrataEngine):
             raise TypeError(f"Expected StrataEngine, got {type(engine).__name__}.")
         if not engine.is_open:
             raise ProductServiceError("ProductService requires an open StrataEngine.")
         if not callable(clock):
             raise TypeError("clock must be callable.")
+        if not callable(token_factory):
+            raise TypeError("token_factory must be callable.")
         self._engine = engine
         self._lock = RLock()
         self._clock = clock
+        self._token_factory = token_factory
 
     def get_user(self, user_id: int) -> User:
         with self._lock:
             return self._user_for_id(user_id)
+
+    def create_session(self, user_id: int) -> CreatedSession:
+        """Persist an opaque session for an existing ACTIVE user."""
+        with self._lock:
+            user = self._user_for_id(user_id)
+            if user.account_state != "ACTIVE":
+                raise ProductPermissionError("Only ACTIVE users can create sessions.")
+            now = self._now()
+            for _ in range(3):
+                token = self._token_factory()
+                try:
+                    digest = session_token_digest(token)
+                except ValueError as exc:
+                    raise ProductValidationError(str(exc)) from exc
+                if self._indexed_records("sessions", "token_digest", digest):
+                    continue
+                session = Session(
+                    self._next_id("sessions"), user.id, digest, now, now + SESSION_LIFETIME_MS,
+                )
+                self._table("sessions").insert((
+                    session.id, session.user_id, session.token_digest,
+                    session.created_at, session.expires_at,
+                ))
+                return CreatedSession(session, token)
+            raise ProductConflictError("Could not allocate a unique session token.")
+
+    def find_session_by_token(self, token: str) -> Session | None:
+        """Resolve an unexpired persisted session by its raw opaque token."""
+        try:
+            digest = session_token_digest(token)
+        except ValueError:
+            return None
+        with self._lock:
+            records = self._indexed_records("sessions", "token_digest", digest)
+            if not records:
+                return None
+            session = self._session(records[0][1])
+            if session.expires_at <= self._now():
+                try:
+                    self._table("sessions").delete(records[0][0])
+                except Exception:
+                    pass
+                return None
+            return session
+
+    def revoke_session(self, session_id: int) -> None:
+        """Delete one exact persisted session by logical ID."""
+        with self._lock:
+            record_id, _ = self._record_or_not_found("sessions", session_id)
+            self._table("sessions").delete(record_id)
 
     def get_workspace(self, workspace_id: int) -> Workspace:
         with self._lock:
@@ -126,8 +188,8 @@ class ProductService:
     def create_user(self, name: str, email: str) -> User:
         with self._lock:
             name = self._required_text("name", name)
-            email = self._required_text("email", email)
-            if any(user.email.casefold() == email.casefold() for user in self._all_models("users", self._user)):
+            email = self._canonical_email(email)
+            if self._users_for_email(email):
                 raise ProductConflictError(f"A user with email '{email}' already exists.")
             user = User(self._next_id("users"), name, email, None, "ACTIVE", self._now(), None)
             self._table("users").insert((
@@ -216,11 +278,8 @@ class ProductService:
             record_id, row = self._record_or_not_found("users", user_id)
             current = self._user(row)
             next_name = current.name if name is _UNSET else self._required_text("name", name)
-            next_email = current.email if email is _UNSET else self._required_text("email", email)
-            if email is not _UNSET and any(
-                user.id != current.id and user.email.casefold() == next_email.casefold()
-                for user in self._all_models("users", self._user)
-            ):
+            next_email = current.email if email is _UNSET else self._canonical_email(email)
+            if email is not _UNSET and any(user.id != current.id for user in self._users_for_email(next_email)):
                 raise ProductConflictError(f"A user with email '{next_email}' already exists.")
             updated = User(
                 current.id, next_name, next_email, current.password_hash,
@@ -382,6 +441,9 @@ class ProductService:
     def _user_for_id(self, user_id: int) -> User:
         return self._required("users", user_id, self._user)
 
+    def _users_for_email(self, email: str) -> tuple[User, ...]:
+        return tuple(self._user(row) for _, row in self._indexed_records("users", "email", email))
+
     def _workspace_for_id(self, workspace_id: int) -> Workspace:
         return self._required("workspaces", workspace_id, self._workspace)
 
@@ -475,6 +537,17 @@ class ProductService:
         return value
 
     @staticmethod
+    def _canonical_email(value: str) -> str:
+        if not isinstance(value, str):
+            raise ProductValidationError("email must be a string.")
+        email = value.strip().casefold()
+        if not email:
+            raise ProductValidationError("email must not be empty.")
+        if len(email) > 254:
+            raise ProductValidationError("email must not exceed 254 characters.")
+        return email
+
+    @staticmethod
     def _optional_text(name: str, value: str | None) -> str | None:
         if value is not None and not isinstance(value, str):
             raise ProductValidationError(f"{name} must be a string or None.")
@@ -526,3 +599,10 @@ class ProductService:
     @staticmethod
     def _note(row: Tuple) -> Note:
         return Note(row[0], row[1], row[2], row[3], row[4], row[5])
+
+    @staticmethod
+    def _session(row: Tuple) -> Session:
+        digest = row[2]
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ProductValidationError("Invalid persisted session token digest.")
+        return Session(row[0], row[1], digest, row[3], row[4])

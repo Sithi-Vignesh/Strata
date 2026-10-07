@@ -70,3 +70,22 @@ class Note:
     content: str
     created_at: int
     updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class Session:
+    """Persisted opaque-session metadata; never contains a raw token."""
+
+    id: int
+    user_id: int
+    token_digest: str
+    created_at: int
+    expires_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class CreatedSession:
+    """A newly persisted session paired with its one-time raw bearer token."""
+
+    session: Session
+    token: str
