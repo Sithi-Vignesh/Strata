@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 
 WORKSPACE_ROLES = frozenset({"OWNER", "MEMBER"})
+WORKSPACE_KINDS = frozenset({"PERSONAL", "COLLABORATIVE"})
+ACCOUNT_STATES = frozenset({"ACTIVE", "PENDING_DELETION", "DELETED"})
 TASK_STATUSES = frozenset({"TODO", "IN_PROGRESS", "DONE"})
 TASK_PRIORITIES = frozenset({"LOW", "MEDIUM", "HIGH"})
 
@@ -13,12 +15,19 @@ class User:
     id: int
     name: str
     email: str
+    password_hash: str | None
+    account_state: str
+    created_at: int
+    deleted_at: int | None
 
 
 @dataclass(frozen=True, slots=True)
 class Workspace:
     id: int
     name: str
+    kind: str
+    created_at: int
+    updated_at: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +43,9 @@ class Project:
     workspace_id: int
     name: str
     description: str | None
+    created_by_user_id: int
+    created_at: int
+    updated_at: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +57,9 @@ class Task:
     status: str
     priority: str
     assignee_user_id: int | None
+    created_by_user_id: int
+    created_at: int
+    updated_at: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,3 +68,5 @@ class Note:
     task_id: int
     author_user_id: int
     content: str
+    created_at: int
+    updated_at: int

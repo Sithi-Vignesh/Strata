@@ -9,6 +9,7 @@ from strata_backend.product_bootstrap import (
     PRODUCT_SCHEMAS,
     PRODUCT_SEED,
     ProductBootstrapError,
+    SEED_TIMESTAMP_MS,
     bootstrap_product,
     initialize_product,
 )
@@ -38,6 +39,11 @@ def test_product_bootstrap_creates_exact_schema_seed_and_indexes(tmp_path: Path)
         tasks = engine.get_table("tasks")
         assert any(row[3] is None for _, row in tasks.scan())
         assert any(row[6] is None for _, row in tasks.scan())
+        assert _rows(engine, "users")[0][4:] == ("ACTIVE", SEED_TIMESTAMP_MS, None)
+        assert _rows(engine, "workspaces")[0][2:] == ("COLLABORATIVE", SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS)
+        assert _rows(engine, "projects")[0][4:] == (1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS)
+        assert all(row.values[7:] == (1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS) for _, row in tasks.scan())
+        assert all(row.values[4:] == (SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS) for _, row in engine.get_table("notes").scan())
 
         actual_indexes = {
             index.name: (table_name, engine.get_table(table_name).schema[index.column_ordinal].name)
@@ -51,8 +57,8 @@ def test_product_bootstrap_creates_exact_schema_seed_and_indexes(tmp_path: Path)
         projects = {row[0] for _, row in engine.get_table("projects").scan()}
         tasks_by_id = {row[0] for _, row in tasks.scan()}
         assert all(row[0] in workspaces and row[1] in users for _, row in engine.get_table("workspace_members").scan())
-        assert all(row[1] in workspaces for _, row in engine.get_table("projects").scan())
-        assert all(row[1] in projects and (row[6] is None or row[6] in users) for _, row in tasks.scan())
+        assert all(row[1] in workspaces and row[4] in users for _, row in engine.get_table("projects").scan())
+        assert all(row[1] in projects and (row[6] is None or row[6] in users) and row[7] in users for _, row in tasks.scan())
         assert all(row[1] in tasks_by_id and row[2] in users for _, row in engine.get_table("notes").scan())
 
 
@@ -84,11 +90,17 @@ def test_structural_initialization_keeps_empty_and_populated_rows_unchanged(tmp_
     with StrataEngine(database) as engine:
         initialize_product(engine)
         assert all(engine.get_table(name).count() == 0 for name in PRODUCT_SCHEMAS)
-        engine.get_table("users").insert((99, "Existing", "existing@strata.local"))
+        engine.get_table("users").insert(
+            (99, "Existing", "existing@strata.local", None, "ACTIVE", SEED_TIMESTAMP_MS, None)
+        )
         initialize_product(engine)
-        assert _rows(engine, "users") == ((99, "Existing", "existing@strata.local"),)
+        assert _rows(engine, "users") == (
+            (99, "Existing", "existing@strata.local", None, "ACTIVE", SEED_TIMESTAMP_MS, None),
+        )
         bootstrap_product(engine)
-        assert _rows(engine, "users") == ((99, "Existing", "existing@strata.local"),)
+        assert _rows(engine, "users") == (
+            (99, "Existing", "existing@strata.local", None, "ACTIVE", SEED_TIMESTAMP_MS, None),
+        )
 
 
 def test_product_bootstrap_rejects_schema_mismatch(tmp_path: Path) -> None:

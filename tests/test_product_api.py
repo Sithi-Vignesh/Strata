@@ -35,7 +35,10 @@ def test_product_api_user_workspace_and_health_contract(tmp_path) -> None:
 
         created = client.post("/api/users", json={"name": "Ada", "email": "ada@strata.local"})
         assert created.status_code == 201
-        assert created.json() == {"id": 2, "name": "Ada", "email": "ada@strata.local"}
+        assert created.json() == {
+            "id": 2, "name": "Ada", "email": "ada@strata.local",
+            "account_state": "ACTIVE", "created_at": created.json()["created_at"], "deleted_at": None,
+        }
         assert client.get("/api/users/2").json() == created.json()
         assert client.patch("/api/users/2", json={"name": "Ada Lovelace"}).json()["name"] == "Ada Lovelace"
 
@@ -97,6 +100,8 @@ def test_task_note_routes_patch_semantics_permissions_and_cascade(tmp_path) -> N
         assert client.patch(f"/api/tasks/{task_id}", json={"description": None}).json()["description"] is None
         assert client.patch(f"/api/tasks/{task_id}", json={"assignee_user_id": None}).json()["assignee_user_id"] is None
         assert client.patch(f"/api/tasks/{task_id}", json={"status": "IN_PROGRESS"}).json()["status"] == "IN_PROGRESS"
+        assert client.patch(f"/api/tasks/{task_id}", json={"created_by_user_id": 1}).status_code == 422
+        assert client.patch(f"/api/tasks/{task_id}", json={"created_at": 1}).status_code == 422
         invalid_status = client.patch(f"/api/tasks/{task_id}", json={"status": "BLOCKED"})
         assert invalid_status.status_code == 422
         assert _detail(invalid_status)["code"] == "PRODUCT_VALIDATION_ERROR"
@@ -134,11 +139,17 @@ def test_product_api_hides_storage_details_and_persists_across_lifespans(tmp_pat
         created = client.post("/api/users", json={"name": "Persistent", "email": "persistent@strata.local"})
         assert created.status_code == 201
         payload = created.json()
-        assert set(payload) == {"id", "name", "email"}
+        assert set(payload) == {"id", "name", "email", "account_state", "created_at", "deleted_at"}
+        assert "password_hash" not in payload
         lowered = str(payload).lower()
         assert all(value not in lowered for value in ("rid", "tuple", "page", "slot", "index", "storage"))
 
     with TestClient(create_app(data_dir=tmp_path / "demo", product_data_dir=database)) as client:
         reopened = client.get("/api/users/2")
         assert reopened.status_code == 200
-        assert reopened.json() == {"id": 2, "name": "Persistent", "email": "persistent@strata.local"}
+        assert reopened.json()["id"] == 2
+        assert reopened.json()["name"] == "Persistent"
+        assert reopened.json()["email"] == "persistent@strata.local"
+        assert reopened.json()["account_state"] == "ACTIVE"
+        assert reopened.json()["deleted_at"] is None
+        assert isinstance(reopened.json()["created_at"], int)

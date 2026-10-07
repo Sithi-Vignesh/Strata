@@ -73,11 +73,17 @@ class UserResponse(_ResponseModel):
     id: int
     name: str
     email: str
+    account_state: str
+    created_at: int
+    deleted_at: int | None
 
 
 class WorkspaceResponse(_ResponseModel):
     id: int
     name: str
+    kind: str
+    created_at: int
+    updated_at: int
 
 
 class WorkspaceMemberResponse(_ResponseModel):
@@ -91,6 +97,9 @@ class ProjectResponse(_ResponseModel):
     workspace_id: int
     name: str
     description: str | None
+    created_by_user_id: int
+    created_at: int
+    updated_at: int
 
 
 class TaskResponse(_ResponseModel):
@@ -101,6 +110,9 @@ class TaskResponse(_ResponseModel):
     status: str
     priority: str
     assignee_user_id: int | None
+    created_by_user_id: int
+    created_at: int
+    updated_at: int
 
 
 class NoteResponse(_ResponseModel):
@@ -108,3 +120,5 @@ class NoteResponse(_ResponseModel):
     task_id: int
     author_user_id: int
     content: str
+    created_at: int
+    updated_at: int

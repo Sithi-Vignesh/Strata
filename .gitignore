@@ -33,6 +33,7 @@ data/*.bin
 data/*.log
 data/*.lock
 /data/dbthon_demo/
+/data/strata/
 
 # Logs
 *.log

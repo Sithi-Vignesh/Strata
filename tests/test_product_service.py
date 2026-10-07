@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from strata_backend.product_bootstrap import bootstrap_product, initialize_product
+from strata_backend.product_bootstrap import SEED_TIMESTAMP_MS, bootstrap_product, initialize_product
 from strata_backend.product_models import Note, Task, User
 from strata_backend.product_service import (
     ProductConflictError,
@@ -26,7 +26,7 @@ def _service(tmp_path: Path) -> tuple[StrataEngine, ProductService]:
 def test_seeded_read_workflow_returns_logical_models_in_id_order(tmp_path: Path) -> None:
     engine, service = _service(tmp_path)
     try:
-        assert service.get_user(1) == User(1, "Sithi", "sithi@strata.local")
+        assert service.get_user(1) == User(1, "Sithi", "sithi@strata.local", None, "ACTIVE", SEED_TIMESTAMP_MS, None)
         assert service.list_workspaces_for_user(1)[0].name == "Strata Team"
         assert service.list_workspace_members(1)[0].role == "OWNER"
         assert [project.id for project in service.list_projects(1)] == [1]
@@ -132,7 +132,7 @@ def test_update_lifecycle_preserves_omitted_fields_and_nullable_values(tmp_path:
     engine, service = _service(tmp_path)
     try:
         user = service.update_user(1, name="Sithi Updated")
-        assert user == User(1, "Sithi Updated", "sithi@strata.local")
+        assert user == User(1, "Sithi Updated", "sithi@strata.local", None, "ACTIVE", SEED_TIMESTAMP_MS, None)
         assert not isinstance(user, (RecordId, Tuple))
         assert service.update_user(1) == user
         with pytest.raises(ProductConflictError):
@@ -169,6 +169,58 @@ def test_update_lifecycle_preserves_omitted_fields_and_nullable_values(tmp_path:
             service.update_note(1, content=" ")
         with pytest.raises(ProductNotFoundError):
             service.update_project(999, name="Missing")
+    finally:
+        engine.close()
+
+
+def test_phase_1_metadata_is_attributed_immutable_and_timestamped(tmp_path: Path) -> None:
+    engine = StrataEngine(tmp_path / "strata").open()
+    try:
+        bootstrap_product(engine)
+        service = ProductService(engine, clock=lambda: 1_800_000_000_000)
+
+        workspace = service.create_workspace("Timestamped workspace", 1)
+        assert workspace.kind == "COLLABORATIVE"
+        updated_workspace = service.update_workspace(workspace.id, name="Renamed timestamped workspace")
+        assert updated_workspace.created_at == workspace.created_at
+        assert updated_workspace.updated_at > workspace.updated_at
+
+        project = service.create_project(workspace.id, "Attributed")
+        assert project.created_by_user_id == 1
+        assert project.created_at == project.updated_at == 1_800_000_000_000
+        updated_project = service.update_project(project.id, name="Renamed attributed")
+        assert updated_project.created_by_user_id == project.created_by_user_id
+        assert updated_project.created_at == project.created_at
+        assert updated_project.updated_at > project.updated_at
+
+        task = service.create_task(updated_project.id, "Attributed task")
+        assert task.created_by_user_id == project.created_by_user_id
+        assert task.created_at == task.updated_at == 1_800_000_000_000
+
+        updated_task = service.update_task(task.id, title="Updated attributed task")
+        assert updated_task.created_by_user_id == task.created_by_user_id
+        assert updated_task.created_at == task.created_at
+        assert updated_task.updated_at > task.updated_at
+
+        note = service.create_note(task.id, 1, "Timestamped")
+        updated_note = service.update_note(note.id, content="Timestamped update")
+        assert updated_note.author_user_id == note.author_user_id
+        assert updated_note.created_at == note.created_at
+        assert updated_note.updated_at > note.updated_at
+    finally:
+        engine.close()
+
+
+def test_invalid_persisted_account_state_and_workspace_kind_are_rejected(tmp_path: Path) -> None:
+    engine, service = _service(tmp_path)
+    try:
+        engine.get_table("users").insert((99, "Invalid", "invalid@strata.local", None, "INVALID", 1, None))
+        with pytest.raises(ProductValidationError, match="account_state"):
+            service.get_user(99)
+
+        engine.get_table("workspaces").insert((99, "Invalid", "INVALID", 1, 1))
+        with pytest.raises(ProductValidationError, match="workspace kind"):
+            service.get_workspace(99)
     finally:
         engine.close()
 

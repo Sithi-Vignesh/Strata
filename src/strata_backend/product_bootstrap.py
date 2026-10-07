@@ -10,11 +10,18 @@ USERS_SCHEMA = Schema([
     Column("id", DataType.BIGINT),
     Column("name", DataType.VARCHAR, max_length=96),
     Column("email", DataType.VARCHAR, max_length=254),
+    Column("password_hash", DataType.VARCHAR, nullable=True, max_length=512),
+    Column("account_state", DataType.VARCHAR, max_length=24),
+    Column("created_at", DataType.BIGINT),
+    Column("deleted_at", DataType.BIGINT, nullable=True),
 ])
 
 WORKSPACES_SCHEMA = Schema([
     Column("id", DataType.BIGINT),
     Column("name", DataType.VARCHAR, max_length=128),
+    Column("kind", DataType.VARCHAR, max_length=24),
+    Column("created_at", DataType.BIGINT),
+    Column("updated_at", DataType.BIGINT),
 ])
 
 WORKSPACE_MEMBERS_SCHEMA = Schema([
@@ -28,6 +35,9 @@ PROJECTS_SCHEMA = Schema([
     Column("workspace_id", DataType.BIGINT),
     Column("name", DataType.VARCHAR, max_length=128),
     Column("description", DataType.VARCHAR, nullable=True, max_length=1024),
+    Column("created_by_user_id", DataType.BIGINT),
+    Column("created_at", DataType.BIGINT),
+    Column("updated_at", DataType.BIGINT),
 ])
 
 TASKS_SCHEMA = Schema([
@@ -38,6 +48,9 @@ TASKS_SCHEMA = Schema([
     Column("status", DataType.VARCHAR, max_length=24),
     Column("priority", DataType.VARCHAR, max_length=16),
     Column("assignee_user_id", DataType.BIGINT, nullable=True),
+    Column("created_by_user_id", DataType.BIGINT),
+    Column("created_at", DataType.BIGINT),
+    Column("updated_at", DataType.BIGINT),
 ])
 
 NOTES_SCHEMA = Schema([
@@ -45,6 +58,8 @@ NOTES_SCHEMA = Schema([
     Column("task_id", DataType.BIGINT),
     Column("author_user_id", DataType.BIGINT),
     Column("content", DataType.VARCHAR, max_length=3072),
+    Column("created_at", DataType.BIGINT),
+    Column("updated_at", DataType.BIGINT),
 ])
 
 PRODUCT_SCHEMAS: Mapping[str, Schema] = {
@@ -56,22 +71,25 @@ PRODUCT_SCHEMAS: Mapping[str, Schema] = {
     "notes": NOTES_SCHEMA,
 }
 
+SEED_TIMESTAMP_MS = 1_700_000_000_000
+
+
 PRODUCT_SEED: Mapping[str, tuple[tuple[object, ...], ...]] = {
-    "users": ((1, "Sithi", "sithi@strata.local"),),
-    "workspaces": ((1, "Strata Team"),),
+    "users": ((1, "Sithi", "sithi@strata.local", None, "ACTIVE", SEED_TIMESTAMP_MS, None),),
+    "workspaces": ((1, "Strata Team", "COLLABORATIVE", SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),),
     "workspace_members": ((1, 1, "OWNER"),),
-    "projects": ((1, 1, "Strata", "Build the Strata collaborative project-management system."),),
+    "projects": ((1, 1, "Strata", "Build the Strata collaborative project-management system.", 1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),),
     "tasks": (
-        (1, 1, "Design application schema", "Define the durable Phase B product tables.", "DONE", "HIGH", 1),
-        (2, 1, "Build product backend APIs", "Expose product operations in the next phase.", "TODO", "HIGH", 1),
-        (3, 1, "Connect product frontend", None, "TODO", "HIGH", None),
-        (4, 1, "Build workspace workflow", "Model the initial workspace collaboration flow.", "IN_PROGRESS", "MEDIUM", 1),
-        (5, 1, "Prepare Review 2", None, "TODO", "HIGH", 1),
+        (1, 1, "Design application schema", "Define the durable Phase B product tables.", "DONE", "HIGH", 1, 1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
+        (2, 1, "Build product backend APIs", "Expose product operations in the next phase.", "TODO", "HIGH", 1, 1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
+        (3, 1, "Connect product frontend", None, "TODO", "HIGH", None, 1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
+        (4, 1, "Build workspace workflow", "Model the initial workspace collaboration flow.", "IN_PROGRESS", "MEDIUM", 1, 1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
+        (5, 1, "Prepare Review 2", None, "TODO", "HIGH", 1, 1, SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
     ),
     "notes": (
-        (1, 1, 1, "The initial schema uses BIGINT logical IDs."),
-        (2, 4, 1, "Keep the DBthon demo isolated from the product database."),
-        (3, 5, 1, "Review the bootstrap contract before adding APIs."),
+        (1, 1, 1, "The initial schema uses BIGINT logical IDs.", SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
+        (2, 4, 1, "Keep the DBthon demo isolated from the product database.", SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
+        (3, 5, 1, "Review the bootstrap contract before adding APIs.", SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
     ),
 }
 

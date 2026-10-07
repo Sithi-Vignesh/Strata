@@ -208,6 +208,8 @@ Bootstrap creates/reuses a `tasks` table with 1,000 deterministic task rows and 
 
 The product schema contains users, workspaces, workspace memberships, projects, tasks, and notes. Its persistent single-column indexes cover email, memberships, project workspace IDs, task project/assignee IDs, and note task IDs. These indexes are non-unique; `ProductService` enforces logical-ID, email, membership, and relationship rules at the application layer.
 
+During current development, an intentional product-schema change requires a reset of `data/strata/` followed by backend restart so product bootstrap can recreate the deterministic development data. The application deliberately rejects incompatible existing product schemas; it does not silently delete or migrate them.
+
 The mutable product foundation remains separate from `data/dbthon_demo`, `demo_bootstrap.py`, and the current DBthon SQL/profile frontend flow because both layers own incompatible `tasks` schemas.
 
 Product routes are available under `/api`: users and their workspaces, workspaces and members, nested projects, nested tasks, and nested notes, plus individual read/update/delete routes. Request and response payloads use logical IDs only; engine record identifiers and storage metadata are not exposed. Authentication is not part of this phase, so workspace ownership and note authorship use explicit user IDs. Product deletion rules remain the `ProductService` rules: task deletion removes notes, while non-empty projects and workspaces cannot be deleted.
