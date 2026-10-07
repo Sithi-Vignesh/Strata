@@ -12,6 +12,9 @@ from pydantic import BaseModel, field_validator
 
 from strata_backend.demo_bootstrap import bootstrap_demo
 from strata_backend.engine_adapter import EngineAdapter
+from strata_backend.product_api import register_product_exception_handlers, router as product_router
+from strata_backend.product_bootstrap import bootstrap_product
+from strata_backend.product_service import ProductService
 from strata_engine import (
     CommandResult,
     IndexScanMetrics,
@@ -35,6 +38,7 @@ from strata_engine import (
 
 logger = logging.getLogger(__name__)
 _DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "dbthon_demo"
+_DEFAULT_PRODUCT_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "strata"
 _CLIENT_QUERY_ERRORS = (
     SQLError,
     TableNotFoundError,
@@ -81,21 +85,32 @@ class HealthResponse(BaseModel):
 
 def create_app(
     data_dir: Path | str | None = None,
+    product_data_dir: Path | str | None = None,
     frontend_origin: str | None = None,
 ) -> FastAPI:
     """Create an isolated lifespan-managed Strata backend application."""
     resolved_data_dir = Path(data_dir) if data_dir is not None else _configured_data_dir()
+    resolved_product_data_dir = (
+        Path(product_data_dir) if product_data_dir is not None else _configured_product_data_dir()
+    )
     origin = frontend_origin or os.environ.get("STRATA_FRONTEND_ORIGIN", "http://localhost:5173")
     adapter = EngineAdapter(StrataEngine(resolved_data_dir))
+    product_engine = StrataEngine(resolved_product_data_dir)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        adapter.engine.open()
         try:
+            adapter.engine.open()
             bootstrap_demo(adapter.engine)
+            product_engine.open()
+            bootstrap_product(product_engine)
+            app.state.product_service = ProductService(product_engine)
             yield
         finally:
-            adapter.engine.close()
+            try:
+                product_engine.close()
+            finally:
+                adapter.engine.close()
 
     application = FastAPI(
         title="Strata API",
@@ -108,9 +123,11 @@ def create_app(
         CORSMiddleware,
         allow_origins=[origin],
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type"],
     )
+    register_product_exception_handlers(application)
+    application.include_router(product_router)
 
     @application.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
     def get_health(request: Request) -> HealthResponse:
@@ -149,6 +166,12 @@ def _configured_data_dir() -> Path:
     """Return the configured app-owned demo database path."""
     value = os.environ.get("STRATA_DATA_DIR")
     return Path(value) if value else _DEFAULT_DATA_DIR
+
+
+def _configured_product_data_dir() -> Path:
+    """Return the configured app-owned product database path."""
+    value = os.environ.get("STRATA_PRODUCT_DATA_DIR")
+    return Path(value) if value else _DEFAULT_PRODUCT_DATA_DIR
 
 
 def _serialize_execution(execution: ProfiledExecutionResult) -> dict[str, object]:

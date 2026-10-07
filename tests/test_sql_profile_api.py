@@ -12,7 +12,7 @@ from strata_engine import ProfiledExecutionResult, StrataEngine
 
 
 def test_profile_endpoint_serializes_index_and_table_scans(tmp_path) -> None:
-    app = create_app(data_dir=tmp_path / "demo")
+    app = create_app(data_dir=tmp_path / "demo", product_data_dir=tmp_path / "product")
     with TestClient(app) as client:
         indexed = client.post(
             "/api/sql/profile",
@@ -56,7 +56,11 @@ def test_profile_endpoint_serializes_index_and_table_scans(tmp_path) -> None:
 
 
 def test_profile_api_errors_commands_cors_and_lifecycle(tmp_path) -> None:
-    app = create_app(data_dir=tmp_path / "demo", frontend_origin="http://ui.test")
+    app = create_app(
+        data_dir=tmp_path / "demo",
+        product_data_dir=tmp_path / "product",
+        frontend_origin="http://ui.test",
+    )
     adapter = app.state.engine_adapter
     assert adapter.engine.is_open is False
     with TestClient(app) as client:
@@ -104,12 +108,12 @@ def test_profile_api_errors_commands_cors_and_lifecycle(tmp_path) -> None:
 
 def test_demo_bootstrap_is_idempotent(tmp_path) -> None:
     database = tmp_path / "demo"
-    with TestClient(create_app(data_dir=database)) as client:
+    with TestClient(create_app(data_dir=database, product_data_dir=tmp_path / "product")) as client:
         assert client.get("/health").status_code == 200
         first = client.post("/api/sql/profile", json={"sql": "SELECT COUNT(*) FROM tasks"}).json()
         assert first["rows"] == [[1000]]
 
-    with TestClient(create_app(data_dir=database)) as client:
+    with TestClient(create_app(data_dir=database, product_data_dir=tmp_path / "product")) as client:
         second = client.post("/api/sql/profile", json={"sql": "SELECT COUNT(*) FROM tasks"}).json()
         assert second["rows"] == [[1000]]
         indexed = client.post(
@@ -189,7 +193,7 @@ def test_ui3_workload_survives_concurrent_board_requests_and_reopen(tmp_path) ->
         for status in ("TODO", "IN_PROGRESS", "REVIEW", "BLOCKED", "DONE")
     ]
 
-    app = create_app(data_dir=database)
+    app = create_app(data_dir=database, product_data_dir=tmp_path / "product")
     with TestClient(app):
         adapter = app.state.engine_adapter
         assert len(adapter.execute_profiled(overview_sql).result.rows) == 5
@@ -198,7 +202,7 @@ def test_ui3_workload_survives_concurrent_board_requests_and_reopen(tmp_path) ->
             board_results = list(executor.map(adapter.execute_profiled, board_sql))
         assert [len(result.result.rows) for result in board_results] == [5] * 5
 
-    with TestClient(create_app(data_dir=database)) as reopened_client:
+    with TestClient(create_app(data_dir=database, product_data_dir=tmp_path / "product")) as reopened_client:
         response = reopened_client.post("/api/sql/profile", json={"sql": tasks_sql})
         assert response.status_code == 200
         assert response.json()["row_count"] == 40

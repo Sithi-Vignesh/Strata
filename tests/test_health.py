@@ -16,13 +16,13 @@ from strata_engine import StrataEngine
 
 def test_app_creation_uses_isolated_database(tmp_path) -> None:
     """Verify an app factory result can be attached to TestClient without default data."""
-    client = TestClient(create_app(data_dir=tmp_path / "demo"))
+    client = TestClient(create_app(data_dir=tmp_path / "demo", product_data_dir=tmp_path / "product"))
     assert client is not None
 
 
 def test_health_endpoint_success(tmp_path) -> None:
     """Verify GET /health returns HTTP 200 and matches the expected schema."""
-    with TestClient(create_app(data_dir=tmp_path / "demo")) as client:
+    with TestClient(create_app(data_dir=tmp_path / "demo", product_data_dir=tmp_path / "product")) as client:
         response = client.get("/health")
 
         assert response.status_code == 200
