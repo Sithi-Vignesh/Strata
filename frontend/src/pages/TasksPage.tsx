@@ -4,13 +4,15 @@ import { useProduct } from "../app/ProductContext";
 import { DataState } from "../components/data/DataState";
 import { PageHeader } from "../components/layout/PageHeader";
 import { TaskDeleteConfirmation, TaskModal } from "../components/tasks/TaskModal";
+import { TaskDetailModal } from "../components/tasks/TaskDetailModal";
 import { TaskTable } from "../components/tasks/TaskTable";
 import type { CreateTaskInput, Task, UpdateTaskInput } from "../types/product";
 
 export function TasksPage() {
-  const { tasks, memberUsers, selectedWorkspaceId, selectedProjectId, status, retry, refreshTasks } = useProduct();
+  const { tasks, currentUser, memberUsers, selectedWorkspaceId, selectedProjectId, status, retry, refreshTasks } = useProduct();
   const [editing, setEditing] = useState<Task | null | "new">(null);
   const [deleting, setDeleting] = useState<Task | null>(null);
+  const [detail, setDetail] = useState<Task | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const loading = status === "loading";
   const error = status === "error";
@@ -24,7 +26,7 @@ export function TasksPage() {
     <DataState error={error} errorMessage="Could not load tasks for this project." loading={loading} loadingMessage="Loading tasks…" onRetry={retry} />
     {!loading && !error && selectedWorkspaceId === null && <p className="py-10 text-sm text-[var(--strata-muted)]">No workspaces available.</p>}
     {!loading && !error && selectedWorkspaceId !== null && selectedProjectId === null && <p className="py-10 text-sm text-[var(--strata-muted)]">No projects in this workspace.</p>}
-    {!loading && !error && selectedProjectId !== null && (tasks.length ? <TaskTable memberUsers={memberUsers} onDelete={setDeleting} onEdit={setEditing} tasks={tasks} /> : <p className="py-10 text-sm text-[var(--strata-muted)]">No tasks in this project.</p>)}
-    {editing !== null && <TaskModal memberUsers={memberUsers} onClose={() => setEditing(null)} onCreate={create} onUpdate={update} task={editing === "new" ? null : editing} />}{deleting && <TaskDeleteConfirmation onCancel={() => setDeleting(null)} onConfirm={remove} task={deleting} />}
+    {!loading && !error && selectedProjectId !== null && (tasks.length ? <TaskTable memberUsers={memberUsers} onDelete={setDeleting} onEdit={setEditing} onOpen={setDetail} tasks={tasks} /> : <p className="py-10 text-sm text-[var(--strata-muted)]">No tasks in this project.</p>)}
+    {editing !== null && <TaskModal memberUsers={memberUsers} onClose={() => setEditing(null)} onCreate={create} onUpdate={update} task={editing === "new" ? null : editing} />}{deleting && <TaskDeleteConfirmation onCancel={() => setDeleting(null)} onConfirm={remove} task={deleting} />}{detail && <TaskDetailModal currentUser={currentUser} memberUsers={memberUsers} onClose={() => setDetail(null)} onEdit={(task) => { setDetail(null); setEditing(task); }} task={detail} />}
   </section>;
 }

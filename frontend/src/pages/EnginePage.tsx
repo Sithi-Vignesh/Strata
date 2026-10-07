@@ -70,8 +70,8 @@ export function EnginePage() {
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--strata-muted)]">Product connection</p>
         <h2 className="mt-2 text-xl font-semibold tracking-[-0.02em] text-[var(--strata-text)]" id="bridge-heading">One engine, two views</h2>
         <div className="mt-4 max-w-3xl space-y-3 text-sm leading-6 text-[var(--strata-muted)]">
-          <p>Overview, Tasks, and Board screens use Strata SQL queries as their application workload.</p>
-          <p>SQL Console Execution Profiles are assembled from the TableScan or IndexScan operator used for that execution.</p>
+          <p>Overview, Tasks, and Board use the product REST API, ProductService, and the dedicated Strata product database.</p>
+          <p>SQL Console remains a separate DBthon demo surface; its execution profiles are assembled from the TableScan or IndexScan operator used for that SQL execution.</p>
         </div>
         <Link className="mt-5 inline-flex rounded-md bg-[var(--strata-accent)] px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--strata-accent)]" to="/sql">Open SQL Console</Link>
       </section>

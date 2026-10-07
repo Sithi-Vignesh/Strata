@@ -18,7 +18,8 @@ describe("EnginePage", () => {
     expect(screen.getByText(/open \/ next \/ close/)).toBeInTheDocument();
     expect(screen.getByText("Volcano-style iterator execution")).toBeInTheDocument();
     expect(screen.getByText(/GROUP BY plus two-table INNER JOIN through nested-loop execution/)).toBeInTheDocument();
-    expect(screen.getByText(/SQL Console Execution Profiles are assembled from the TableScan or IndexScan operator/)).toBeInTheDocument();
+    expect(screen.getByText(/Overview, Tasks, and Board use the product REST API/)).toBeInTheDocument();
+    expect(screen.getByText(/SQL Console remains a separate DBthon demo surface/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open SQL Console" })).toHaveAttribute("href", "/sql");
   });
 });

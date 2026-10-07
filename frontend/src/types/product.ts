@@ -44,3 +44,6 @@ export type UpdateTaskInput = Partial<{
 }>;
 
 export type Note = { id: number; task_id: number; author_user_id: number; content: string };
+
+export type CreateNoteInput = { author_user_id: number; content: string };
+export type UpdateNoteInput = { content: string };

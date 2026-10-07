@@ -3,7 +3,7 @@ import { PriorityBadge } from "./PriorityBadge";
 import { StatusBadge } from "./StatusBadge";
 import { formatTaskId } from "./taskPresentation";
 
-export function TaskTable({ tasks, memberUsers, onEdit, onDelete }: { tasks: Task[]; memberUsers: Record<number, User>; onEdit: (task: Task) => void; onDelete: (task: Task) => void }) {
+export function TaskTable({ tasks, memberUsers, onEdit, onDelete, onOpen }: { tasks: Task[]; memberUsers: Record<number, User>; onEdit: (task: Task) => void; onDelete: (task: Task) => void; onOpen: (task: Task) => void }) {
   return (
     <div className="mt-6 overflow-x-auto rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)]">
       <table className="min-w-[48rem] w-full border-collapse text-left text-sm">
@@ -21,7 +21,7 @@ export function TaskTable({ tasks, memberUsers, onEdit, onDelete }: { tasks: Tas
           {tasks.map((task) => (
             <tr className="bg-[var(--strata-surface)]" key={task.id}>
               <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[var(--strata-subtle)]">{formatTaskId(task.id)}</td>
-              <td className="px-4 py-3 font-medium text-[var(--strata-text)]">{task.title}</td>
+              <td className="px-4 py-3 font-medium text-[var(--strata-text)]"><button className="text-left hover:underline" onClick={() => onOpen(task)} type="button">{task.title}</button></td>
               <td className="whitespace-nowrap px-4 py-3"><StatusBadge status={task.status} /></td>
               <td className="whitespace-nowrap px-4 py-3"><PriorityBadge priority={task.priority} /></td>
               <td className="whitespace-nowrap px-4 py-3 text-[var(--strata-muted)]">{task.assignee_user_id === null ? "Unassigned" : (memberUsers[task.assignee_user_id]?.name ?? "Unknown member")}</td>

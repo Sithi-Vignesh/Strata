@@ -1,5 +1,5 @@
 import { requestJson } from "./strata";
-import type { CreateTaskInput, Project, Task, UpdateTaskInput, User, Workspace, WorkspaceMember } from "../types/product";
+import type { CreateNoteInput, CreateTaskInput, Note, Project, Task, UpdateNoteInput, UpdateTaskInput, User, Workspace, WorkspaceMember } from "../types/product";
 
 export function getUser(userId: number): Promise<User> {
   return requestJson<User>(`/api/users/${userId}`);
@@ -32,6 +32,11 @@ export function updateTask(taskId: number, input: UpdateTaskInput): Promise<Task
 export function deleteTask(taskId: number): Promise<void> {
   return requestJson<void>(`/api/tasks/${taskId}`, { method: "DELETE" });
 }
+
+export function listTaskNotes(taskId: number): Promise<Note[]> { return requestJson<Note[]>(`/api/tasks/${taskId}/notes`); }
+export function createNote(taskId: number, input: CreateNoteInput): Promise<Note> { return requestJson<Note>(`/api/tasks/${taskId}/notes`, jsonRequest("POST", input)); }
+export function updateNote(noteId: number, input: UpdateNoteInput): Promise<Note> { return requestJson<Note>(`/api/notes/${noteId}`, jsonRequest("PATCH", input)); }
+export function deleteNote(noteId: number): Promise<void> { return requestJson<void>(`/api/notes/${noteId}`, { method: "DELETE" }); }
 
 function jsonRequest(method: "POST" | "PATCH", body: object): RequestInit {
   return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
