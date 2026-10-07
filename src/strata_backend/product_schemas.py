@@ -21,6 +21,11 @@ class RegisterAccount(_RequestModel):
     password: str
 
 
+class LoginRequest(_RequestModel):
+    email: str
+    password: str
+
+
 class UpdateUser(_RequestModel):
     name: str | None = None
     email: str | None = None

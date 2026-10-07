@@ -24,6 +24,7 @@ from strata_backend.product_models import (
     WorkspaceMember,
 )
 from strata_backend.product_passwords import hash_password
+from strata_backend.product_passwords import verify_password
 from strata_backend.product_sessions import SESSION_LIFETIME_MS, generate_session_token, session_token_digest
 from strata_backend.product_time import utc_epoch_milliseconds
 
@@ -162,6 +163,27 @@ class ProductService:
                     ) from exc
                 raise
             return RegisteredAccount(user, workspace, project, session, token)
+
+    def authenticate_user(self, email: str, password: str) -> CreatedSession | None:
+        """Verify credentials outside the lock, then create a session if still ACTIVE."""
+        try:
+            canonical_email = self._canonical_email(email)
+        except ProductValidationError:
+            return None
+
+        with self._lock:
+            users = self._users_for_email(canonical_email)
+            user = users[0] if len(users) == 1 else None
+            if user is None or user.account_state != "ACTIVE" or user.password_hash is None:
+                return None
+            password_hash = user.password_hash
+
+        if not verify_password(password_hash, password):
+            return None
+        try:
+            return self.create_session(user.id)
+        except (ProductNotFoundError, ProductPermissionError):
+            return None
 
     def find_session_by_token(self, token: str) -> Session | None:
         """Resolve an unexpired persisted session by its raw opaque token."""

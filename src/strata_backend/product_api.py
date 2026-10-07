@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends, FastAPI, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from strata_backend.product_schemas import (
@@ -12,6 +12,7 @@ from strata_backend.product_schemas import (
     CreateTask,
     CreateWorkspace,
     NoteResponse,
+    LoginRequest,
     RegisterAccount,
     ProjectResponse,
     TaskResponse,
@@ -24,6 +25,12 @@ from strata_backend.product_schemas import (
     WorkspaceMemberResponse,
     WorkspaceResponse,
 )
+from strata_backend.product_auth import (
+    SESSION_COOKIE_NAME,
+    clear_session_cookie,
+    set_session_cookie,
+)
+from strata_backend.product_models import User
 from strata_backend.product_service import (
     ProductConflictError,
     ProductNotFoundError,
@@ -41,6 +48,43 @@ router = APIRouter(prefix="/api")
 def get_product_service(request: Request) -> ProductService:
     """Retrieve the lifespan-owned product service for the current application."""
     return request.app.state.product_service
+
+
+def _authentication_required() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={"code": "AUTHENTICATION_REQUIRED", "message": "Authentication required."},
+    )
+
+
+def _invalid_credentials() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={"code": "INVALID_CREDENTIALS", "message": "Invalid credentials."},
+    )
+
+
+def _cookie_secure(request: Request) -> bool:
+    return bool(request.app.state.session_cookie_secure)
+
+
+def get_current_user(
+    session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    service: ProductService = Depends(get_product_service),
+) -> User:
+    """Resolve an ACTIVE user from the opaque browser session cookie."""
+    if session_token is None:
+        raise _authentication_required()
+    session = service.find_session_by_token(session_token)
+    if session is None:
+        raise _authentication_required()
+    try:
+        user = service.get_user(session.user_id)
+    except ProductServiceError:
+        raise _authentication_required() from None
+    if user.account_state != "ACTIVE":
+        raise _authentication_required()
+    return user
 
 
 def register_product_exception_handlers(application: FastAPI) -> None:
@@ -80,8 +124,52 @@ async def _internal_service_error_handler(_: Request, exc: ProductServiceError) 
 
 
 @router.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register_account(body: RegisterAccount, service: ProductService = Depends(get_product_service)) -> object:
-    return service.register_account(body.name, body.email, body.password).user
+def register_account(
+    body: RegisterAccount,
+    request: Request,
+    response: Response,
+    service: ProductService = Depends(get_product_service),
+) -> object:
+    registered = service.register_account(body.name, body.email, body.password)
+    set_session_cookie(response, registered.token, secure=_cookie_secure(request))
+    return registered.user
+
+
+@router.post("/auth/login", response_model=UserResponse)
+def login(
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    service: ProductService = Depends(get_product_service),
+) -> object:
+    authenticated = service.authenticate_user(body.email, body.password)
+    if authenticated is None:
+        raise _invalid_credentials()
+    set_session_cookie(response, authenticated.token, secure=_cookie_secure(request))
+    return service.get_user(authenticated.session.user_id)
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    request: Request,
+    session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    service: ProductService = Depends(get_product_service),
+) -> Response:
+    if session_token is not None:
+        session = service.find_session_by_token(session_token)
+        if session is not None:
+            try:
+                service.revoke_session(session.id)
+            except ProductServiceError:
+                pass
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    clear_session_cookie(response, secure=_cookie_secure(request))
+    return response
+
+
+@router.get("/auth/me", response_model=UserResponse)
+def get_authenticated_user(current_user: User = Depends(get_current_user)) -> User:
+    return current_user
 
 
 @router.get("/users/{user_id}", response_model=UserResponse)

@@ -87,6 +87,7 @@ def create_app(
     data_dir: Path | str | None = None,
     product_data_dir: Path | str | None = None,
     frontend_origin: str | None = None,
+    session_cookie_secure: bool | None = None,
 ) -> FastAPI:
     """Create an isolated lifespan-managed Strata backend application."""
     resolved_data_dir = Path(data_dir) if data_dir is not None else _configured_data_dir()
@@ -94,6 +95,11 @@ def create_app(
         Path(product_data_dir) if product_data_dir is not None else _configured_product_data_dir()
     )
     origin = frontend_origin or os.environ.get("STRATA_FRONTEND_ORIGIN", "http://localhost:5173")
+    cookie_secure = (
+        session_cookie_secure
+        if session_cookie_secure is not None
+        else _configured_session_cookie_secure()
+    )
     adapter = EngineAdapter(StrataEngine(resolved_data_dir))
     product_engine = StrataEngine(resolved_product_data_dir)
 
@@ -119,6 +125,7 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.engine_adapter = adapter
+    application.state.session_cookie_secure = cookie_secure
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[origin],
@@ -172,6 +179,19 @@ def _configured_product_data_dir() -> Path:
     """Return the configured app-owned product database path."""
     value = os.environ.get("STRATA_PRODUCT_DATA_DIR")
     return Path(value) if value else _DEFAULT_PRODUCT_DATA_DIR
+
+
+def _configured_session_cookie_secure() -> bool:
+    """Parse the optional session-cookie Secure setting without silent downgrades."""
+    value = os.environ.get("STRATA_SESSION_COOKIE_SECURE")
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError("STRATA_SESSION_COOKIE_SECURE must be 'true' or 'false' when set.")
 
 
 def _serialize_execution(execution: ProfiledExecutionResult) -> dict[str, object]:
