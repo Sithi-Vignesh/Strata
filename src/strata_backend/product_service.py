@@ -1,0 +1,287 @@
+"""Create/read product workflow over Strata's direct Table APIs."""
+
+from threading import RLock
+from typing import Callable, TypeVar
+
+from strata_engine import StrataEngine, Tuple
+from strata_engine.catalog import Table
+from strata_engine.storage import RecordId
+
+from strata_backend.product_models import (
+    TASK_PRIORITIES,
+    TASK_STATUSES,
+    WORKSPACE_ROLES,
+    Note,
+    Project,
+    Task,
+    User,
+    Workspace,
+    WorkspaceMember,
+)
+
+
+class ProductServiceError(RuntimeError):
+    """Base error for application-level product operations."""
+
+
+class ProductNotFoundError(ProductServiceError):
+    """Raised when a requested logical product entity does not exist."""
+
+
+class ProductConflictError(ProductServiceError):
+    """Raised when an application-level uniqueness invariant is violated."""
+
+
+class ProductValidationError(ProductServiceError):
+    """Raised when product input violates a supported domain rule."""
+
+
+class ProductPermissionError(ProductServiceError):
+    """Raised when required workspace-membership context is absent.
+
+    This represents a domain rule only; authentication and full authorization are
+    intentionally outside the B2A service scope.
+    """
+
+
+ModelT = TypeVar("ModelT")
+
+
+class ProductService:
+    """Application integrity boundary for Strata's initial create/read workflow.
+
+    Every public operation is serialized by this instance's process-local lock.
+    That prevents duplicate ``MAX + 1``-style allocation within this service
+    instance only. It is not a database transaction, rollback mechanism, or
+    cross-process concurrency-control system.
+    """
+
+    def __init__(self, engine: StrataEngine) -> None:
+        if not isinstance(engine, StrataEngine):
+            raise TypeError(f"Expected StrataEngine, got {type(engine).__name__}.")
+        if not engine.is_open:
+            raise ProductServiceError("ProductService requires an open StrataEngine.")
+        self._engine = engine
+        self._lock = RLock()
+
+    def get_user(self, user_id: int) -> User:
+        with self._lock:
+            return self._user_for_id(user_id)
+
+    def get_workspace(self, workspace_id: int) -> Workspace:
+        with self._lock:
+            return self._workspace_for_id(workspace_id)
+
+    def list_workspaces_for_user(self, user_id: int) -> tuple[Workspace, ...]:
+        with self._lock:
+            self._user_for_id(user_id)
+            workspace_ids = {member.workspace_id for member in self._members_for_user(user_id)}
+            return tuple(sorted((self._workspace_for_id(item) for item in workspace_ids), key=lambda item: item.id))
+
+    def list_workspace_members(self, workspace_id: int) -> tuple[WorkspaceMember, ...]:
+        with self._lock:
+            self._workspace_for_id(workspace_id)
+            return tuple(sorted(self._members_for_workspace(workspace_id), key=lambda item: (item.user_id, item.role)))
+
+    def get_project(self, project_id: int) -> Project:
+        with self._lock:
+            return self._project_for_id(project_id)
+
+    def list_projects(self, workspace_id: int) -> tuple[Project, ...]:
+        with self._lock:
+            self._workspace_for_id(workspace_id)
+            return tuple(sorted(self._indexed_models("projects", "workspace_id", workspace_id, self._project), key=lambda item: item.id))
+
+    def get_task(self, task_id: int) -> Task:
+        with self._lock:
+            return self._task_for_id(task_id)
+
+    def list_tasks(self, project_id: int) -> tuple[Task, ...]:
+        with self._lock:
+            self._project_for_id(project_id)
+            return tuple(sorted(self._indexed_models("tasks", "project_id", project_id, self._task), key=lambda item: item.id))
+
+    def get_note(self, note_id: int) -> Note:
+        with self._lock:
+            return self._note_for_id(note_id)
+
+    def list_notes(self, task_id: int) -> tuple[Note, ...]:
+        with self._lock:
+            self._task_for_id(task_id)
+            return tuple(sorted(self._indexed_models("notes", "task_id", task_id, self._note), key=lambda item: item.id))
+
+    def create_user(self, name: str, email: str) -> User:
+        with self._lock:
+            name = self._required_text("name", name)
+            email = self._required_text("email", email)
+            if any(user.email.casefold() == email.casefold() for user in self._all_models("users", self._user)):
+                raise ProductConflictError(f"A user with email '{email}' already exists.")
+            user = User(self._next_id("users"), name, email)
+            self._table("users").insert((user.id, user.name, user.email))
+            return user
+
+    def create_workspace(self, name: str, owner_user_id: int) -> Workspace:
+        with self._lock:
+            name = self._required_text("name", name)
+            self._user_for_id(owner_user_id)
+            workspace = Workspace(self._next_id("workspaces"), name)
+            # This pair of inserts is process-serialized but is not rollback-safe.
+            self._table("workspaces").insert((workspace.id, workspace.name))
+            self._create_membership(workspace.id, owner_user_id, "OWNER")
+            return workspace
+
+    def create_project(self, workspace_id: int, name: str, description: str | None = None) -> Project:
+        with self._lock:
+            self._workspace_for_id(workspace_id)
+            name = self._required_text("name", name)
+            description = self._optional_text("description", description)
+            project = Project(self._next_id("projects"), workspace_id, name, description)
+            self._table("projects").insert((project.id, project.workspace_id, project.name, project.description))
+            return project
+
+    def create_task(
+        self,
+        project_id: int,
+        title: str,
+        description: str | None = None,
+        status: str = "TODO",
+        priority: str = "MEDIUM",
+        assignee_user_id: int | None = None,
+    ) -> Task:
+        with self._lock:
+            project = self._project_for_id(project_id)
+            title = self._required_text("title", title)
+            description = self._optional_text("description", description)
+            self._allowed("status", status, TASK_STATUSES)
+            self._allowed("priority", priority, TASK_PRIORITIES)
+            if assignee_user_id is not None:
+                self._user_for_id(assignee_user_id)
+                self._require_membership(project.workspace_id, assignee_user_id, "assignee")
+            task = Task(self._next_id("tasks"), project_id, title, description, status, priority, assignee_user_id)
+            self._table("tasks").insert((
+                task.id, task.project_id, task.title, task.description,
+                task.status, task.priority, task.assignee_user_id,
+            ))
+            return task
+
+    def create_note(self, task_id: int, author_user_id: int, content: str) -> Note:
+        with self._lock:
+            task = self._task_for_id(task_id)
+            self._user_for_id(author_user_id)
+            project = self._project_for_id(task.project_id)
+            self._require_membership(project.workspace_id, author_user_id, "note author")
+            note = Note(self._next_id("notes"), task_id, author_user_id, self._required_text("content", content))
+            self._table("notes").insert((note.id, note.task_id, note.author_user_id, note.content))
+            return note
+
+    def _table(self, name: str) -> Table:
+        if not self._engine.is_open:
+            raise ProductServiceError("ProductService cannot use a closed StrataEngine.")
+        return self._engine.get_table(name)
+
+    def _next_id(self, table_name: str) -> int:
+        values = [row[0] for _, row in self._table(table_name).scan()]
+        return 1 if not values else max(values) + 1
+
+    def _find(self, table_name: str, logical_id: int) -> tuple[RecordId, Tuple] | None:
+        self._logical_id(logical_id)
+        return next(((rid, row) for rid, row in self._table(table_name).scan() if row[0] == logical_id), None)
+
+    def _required(self, table_name: str, logical_id: int, mapper: Callable[[Tuple], ModelT]) -> ModelT:
+        found = self._find(table_name, logical_id)
+        if found is None:
+            raise ProductNotFoundError(f"{table_name.rstrip('s').replace('_', ' ').title()} {logical_id} does not exist.")
+        return mapper(found[1])
+
+    def _user_for_id(self, user_id: int) -> User:
+        return self._required("users", user_id, self._user)
+
+    def _workspace_for_id(self, workspace_id: int) -> Workspace:
+        return self._required("workspaces", workspace_id, self._workspace)
+
+    def _project_for_id(self, project_id: int) -> Project:
+        return self._required("projects", project_id, self._project)
+
+    def _task_for_id(self, task_id: int) -> Task:
+        return self._required("tasks", task_id, self._task)
+
+    def _note_for_id(self, note_id: int) -> Note:
+        return self._required("notes", note_id, self._note)
+
+    def _all_models(self, table_name: str, mapper: Callable[[Tuple], ModelT]) -> tuple[ModelT, ...]:
+        return tuple(mapper(row) for _, row in self._table(table_name).scan())
+
+    def _indexed_models(self, table_name: str, column_name: str, value: object, mapper: Callable[[Tuple], ModelT]) -> tuple[ModelT, ...]:
+        table = self._table(table_name)
+        index = table.index_for_column(column_name)
+        if index is None:
+            return tuple(mapper(row) for _, row in table.scan() if row[table.schema.column_index(column_name)] == value)
+        return tuple(mapper(table.get(record_id)) for record_id in index.tree.search(value))
+
+    def _members_for_workspace(self, workspace_id: int) -> tuple[WorkspaceMember, ...]:
+        return self._indexed_models("workspace_members", "workspace_id", workspace_id, self._member)
+
+    def _members_for_user(self, user_id: int) -> tuple[WorkspaceMember, ...]:
+        return self._indexed_models("workspace_members", "user_id", user_id, self._member)
+
+    def _create_membership(self, workspace_id: int, user_id: int, role: str) -> WorkspaceMember:
+        self._workspace_for_id(workspace_id)
+        self._user_for_id(user_id)
+        self._allowed("role", role, WORKSPACE_ROLES)
+        if any(member.user_id == user_id for member in self._members_for_workspace(workspace_id)):
+            raise ProductConflictError(f"User {user_id} is already a workspace member.")
+        member = WorkspaceMember(workspace_id, user_id, role)
+        self._table("workspace_members").insert((member.workspace_id, member.user_id, member.role))
+        return member
+
+    def _require_membership(self, workspace_id: int, user_id: int, subject: str) -> None:
+        if not any(member.user_id == user_id for member in self._members_for_workspace(workspace_id)):
+            raise ProductPermissionError(f"User {user_id} is not a member of the workspace for this {subject}.")
+
+    @staticmethod
+    def _logical_id(value: int) -> int:
+        if type(value) is not int or value < 1:
+            raise ProductValidationError("Logical IDs must be positive integers.")
+        return value
+
+    @staticmethod
+    def _required_text(name: str, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ProductValidationError(f"{name} must not be empty.")
+        return value
+
+    @staticmethod
+    def _optional_text(name: str, value: str | None) -> str | None:
+        if value is not None and not isinstance(value, str):
+            raise ProductValidationError(f"{name} must be a string or None.")
+        return value
+
+    @staticmethod
+    def _allowed(name: str, value: str, allowed: frozenset[str]) -> str:
+        if not isinstance(value, str) or value not in allowed:
+            raise ProductValidationError(f"Invalid {name} '{value}'.")
+        return value
+
+    @staticmethod
+    def _user(row: Tuple) -> User:
+        return User(row[0], row[1], row[2])
+
+    @staticmethod
+    def _workspace(row: Tuple) -> Workspace:
+        return Workspace(row[0], row[1])
+
+    @staticmethod
+    def _member(row: Tuple) -> WorkspaceMember:
+        return WorkspaceMember(row[0], row[1], row[2])
+
+    @staticmethod
+    def _project(row: Tuple) -> Project:
+        return Project(row[0], row[1], row[2], row[3])
+
+    @staticmethod
+    def _task(row: Tuple) -> Task:
+        return Task(row[0], row[1], row[2], row[3], row[4], row[5], row[6])
+
+    @staticmethod
+    def _note(row: Tuple) -> Note:
+        return Note(row[0], row[1], row[2], row[3])

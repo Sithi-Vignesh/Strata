@@ -10,6 +10,7 @@ from strata_backend.product_bootstrap import (
     PRODUCT_SEED,
     ProductBootstrapError,
     bootstrap_product,
+    initialize_product,
 )
 from strata_engine import Column, DataType, Schema, StrataEngine
 
@@ -78,6 +79,18 @@ def test_product_bootstrap_reopens_with_seed_nulls_and_indexes(tmp_path: Path) -
         assert {index.name for table_name in PRODUCT_SCHEMAS for index in engine.get_table(table_name).indexes} == set(PRODUCT_INDEXES)
 
 
+def test_structural_initialization_keeps_empty_and_populated_rows_unchanged(tmp_path: Path) -> None:
+    database = tmp_path / "strata"
+    with StrataEngine(database) as engine:
+        initialize_product(engine)
+        assert all(engine.get_table(name).count() == 0 for name in PRODUCT_SCHEMAS)
+        engine.get_table("users").insert((99, "Existing", "existing@strata.local"))
+        initialize_product(engine)
+        assert _rows(engine, "users") == ((99, "Existing", "existing@strata.local"),)
+        bootstrap_product(engine)
+        assert _rows(engine, "users") == ((99, "Existing", "existing@strata.local"),)
+
+
 def test_product_bootstrap_rejects_schema_mismatch(tmp_path: Path) -> None:
     with StrataEngine(tmp_path / "strata") as engine:
         engine.create_table("users", Schema([Column("id", DataType.INTEGER)]))
@@ -85,14 +98,15 @@ def test_product_bootstrap_rejects_schema_mismatch(tmp_path: Path) -> None:
             bootstrap_product(engine)
 
 
-def test_product_bootstrap_rejects_partial_seed_state(tmp_path: Path) -> None:
+def test_product_bootstrap_does_not_repair_partial_product_data(tmp_path: Path) -> None:
     with StrataEngine(tmp_path / "strata") as engine:
         for name, schema in PRODUCT_SCHEMAS.items():
             engine.create_table(name, schema)
         engine.get_table("users").insert(PRODUCT_SEED["users"][0])
 
-        with pytest.raises(ProductBootstrapError, match="partial seed state"):
-            bootstrap_product(engine)
+        bootstrap_product(engine)
+        assert _rows(engine, "users") == PRODUCT_SEED["users"]
+        assert all(engine.get_table(name).count() == 0 for name in PRODUCT_SCHEMAS if name != "users")
 
 
 def test_product_bootstrap_rejects_wrong_named_index_target(tmp_path: Path) -> None:

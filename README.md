@@ -4,7 +4,7 @@
 
 Strata combines a custom persistent relational engine in Python with a FastAPI bridge and a React/TypeScript interface. The engine is substantial infrastructure and a major technical foundation; the long-term product is a collaborative workspace for projects, tasks, and notes.
 
-Today, Strata provides a working engine, deterministic task-management demo, SQL/profile interface, and limited read-oriented workspace views. It is not yet a complete collaborative product.
+Today, Strata provides a working engine, deterministic DBthon demo, SQL/profile interface, and an isolated mutable product foundation. It is not yet a complete collaborative product.
 
 ## Project status
 
@@ -14,14 +14,29 @@ Current capabilities include:
 - a constrained SQL frontend supporting `CREATE TABLE`, `DROP TABLE`, `INSERT`, `SELECT`, `UPDATE`, and `DELETE`;
 - FastAPI integration, including SQL execution profiling;
 - a React demo interface for overview, task, board, SQL-console, and engine-explanation views.
+- a six-table product schema, deterministic development seed, persistent product indexes, and create/read `ProductService`.
 
-The current frontend pages use real engine data, but they are primarily demo/read-oriented. Product CRUD APIs, authentication, multi-user workflows, and collaboration are future work.
+The current frontend pages use real engine data, but they are primarily demo/read-oriented. Product REST APIs, authentication, richer multi-user workflows, and collaboration are future work.
 
 ## Why Strata
 
 Strata is built around a practical constraint: the application should determine what the database needs next. The project-management workload drives the engine roadmap instead of treating database features as isolated exercises.
 
 ## Architecture
+
+### Product path
+
+```text
+FastAPI (product routes planned next)
+  -> ProductService
+  -> application integrity and business rules
+  -> Strata Table APIs
+  -> custom relational engine and storage
+```
+
+The current product flow is `User -> Workspace membership -> Workspace -> Projects -> Tasks -> Notes`. Task assignees are nullable; a non-null assignee and a note author must belong to the task project's workspace.
+
+`ProductService` serializes each public operation with one process-local service-instance lock. This is not a database transaction, rollback mechanism, ACID guarantee, 2PL, MVCC, or crash-recovery mechanism.
 
 ### SELECT path
 
@@ -185,6 +200,14 @@ The application starts with a deterministic demo database at `data/dbthon_demo` 
 
 Bootstrap creates/reuses a `tasks` table with 1,000 deterministic task rows and ensures `tasks_status_idx` on `tasks.status`. It is a reproducible workload for the frontend and SQL/profile demonstrations, not the future production workspace schema.
 
+### Product foundation and demo separation
+
+`src/strata_backend/product_bootstrap.py` owns the product structural initializer. `initialize_product(engine)` creates or validates product tables and indexes without changing existing rows. `bootstrap_product(engine)` adds the deterministic development seed only when every product table is empty.
+
+The product schema contains users, workspaces, workspace memberships, projects, tasks, and notes. Its persistent single-column indexes cover email, memberships, project workspace IDs, task project/assignee IDs, and note task IDs. These indexes are non-unique; `ProductService` enforces logical-ID, email, membership, and relationship rules at the application layer.
+
+The mutable product foundation remains separate from `data/dbthon_demo`, `demo_bootstrap.py`, and the current DBthon SQL/profile frontend flow.
+
 Start the backend from the repository root:
 
 ```bash
@@ -253,7 +276,7 @@ Run the Python suite with:
 python -m pytest -q
 ```
 
-Latest verified local regression for the current SQL UPDATE working tree: **647 tests passing**, with one known Starlette/httpx `TestClient` deprecation warning.
+The B1 checkpoint previously verified **653 tests passing**, with one known Starlette/httpx `TestClient` deprecation warning. Run the suite after changes rather than treating that historical count as a current guarantee.
 
 ## Current limitations
 
@@ -263,19 +286,20 @@ Latest verified local regression for the current SQL UPDATE working tree: **647 
 - There is no transaction manager, statement rollback, `BEGIN`/`COMMIT`/`ROLLBACK`, locks/2PL, MVCC, deadlock detection, WAL, or crash recovery. An unexpected multi-row mutation failure can leave earlier rows modified.
 - Planning is rule-based, not cost-based; there are no statistics or advanced join optimization.
 - B+ tree indexing has the restrictions described above, including no index-only scans or multi-index intersection.
-- The product surface remains a demo-oriented frontend rather than a complete multi-user collaboration system.
+- There are no PK, FK, UNIQUE, CHECK, auto-increment, or sequence features; product integrity is currently application-enforced.
+- Product REST APIs, authentication, and frontend product integration are not complete. The frontend still uses the DBthon demo integration.
 
 ## Roadmap
 
 The application determines which DBMS work matters next.
 
-1. **Phase A — application-critical SQL:** current `SELECT` / `INSERT` / `UPDATE` / `DELETE` foundation is complete.
-2. **Phase B — real Strata relational schema:** users, workspaces, workspace members, projects, tasks, and notes.
-3. **Phase C — product backend APIs:** workspace, project, task, and note CRUD.
-4. **Phase D — product UI rebuild:** workspace switching, project navigation, task creation/editing, board interaction, task detail, and notes.
-5. **Phase E — collaboration:** users, membership, assignment, and activity/collaboration behavior.
-6. **Phase F — transaction and concurrency work:** transaction boundaries, locking/2PL, and deadlock handling.
-7. **Phase G — differentiated database/product innovation.**
+1. **Phase A — application-critical SQL:** `SELECT` / `INSERT` / `UPDATE` / `DELETE` foundation complete.
+2. **Phase B1:** six-table product schema, deterministic development seed, and persistent product indexes complete.
+3. **Phase B2A:** create/read `ProductService`, application integrity validation, and process-local service serialization complete.
+4. **Next B2B:** update and deletion lifecycle.
+5. **Next B3:** product REST API/lifecycle integration, followed by frontend product workflow integration.
+6. **Later full version:** authentication/session security, richer roles/permissions, timestamps/deadlines, invitations/member management, activity/notifications, richer task features, and justified real-time collaboration.
+7. **Later engine work driven by product needs:** constraints, stronger ID generation, transactions/concurrency control, locking/2PL/deadlock handling, WAL/recovery, and optimizer improvements.
 
 ## Demo reset
 

@@ -87,24 +87,26 @@ PRODUCT_INDEXES: Mapping[str, tuple[str, str]] = {
 
 
 class ProductBootstrapError(RuntimeError):
-    """Raised when an existing product database violates the B1 bootstrap contract."""
+    """Raised when an existing product database violates the structural contract."""
 
 
 def bootstrap_product(engine: StrataEngine) -> None:
-    """Create or validate the B1 product schema, deterministic seed, and indexes.
+    """Initialize product structure and seed only a completely fresh product DB."""
+    tables = initialize_product(engine)
+    if all(table.count() == 0 for table in tables.values()):
+        _insert_seed(tables)
 
-    A new database must have all product tables empty and receives the fixed seed.
-    A later invocation accepts only the exact seeded rows. Any partial or altered
-    seed state raises ``ProductBootstrapError`` instead of attempting a repair.
-    """
+
+def initialize_product(engine: StrataEngine) -> dict[str, Table]:
+    """Create or validate product tables and indexes without changing row data."""
     if not isinstance(engine, StrataEngine):
         raise TypeError(f"Expected StrataEngine, got {type(engine).__name__}.")
     if not engine.is_open:
         raise ProductBootstrapError("Product bootstrap requires an open StrataEngine.")
 
     tables = _ensure_tables(engine)
-    _ensure_seed(tables)
     _ensure_indexes(engine, tables)
+    return tables
 
 
 def _ensure_tables(engine: StrataEngine) -> dict[str, Table]:
@@ -120,23 +122,10 @@ def _ensure_tables(engine: StrataEngine) -> dict[str, Table]:
     return tables
 
 
-def _ensure_seed(tables: Mapping[str, Table]) -> None:
-    counts = {name: table.count() for name, table in tables.items()}
-    if all(count == 0 for count in counts.values()):
-        for name, rows in PRODUCT_SEED.items():
-            for row in rows:
-                tables[name].insert(row)
-        return
-
-    if any(count == 0 for count in counts.values()):
-        raise ProductBootstrapError("Product database has a partial seed state.")
-
-    for name, expected_rows in PRODUCT_SEED.items():
-        actual_rows = tuple(row.values for _, row in tables[name].scan())
-        if actual_rows != expected_rows:
-            raise ProductBootstrapError(
-                f"Product table '{name}' does not match the deterministic B1 seed state."
-            )
+def _insert_seed(tables: Mapping[str, Table]) -> None:
+    for name, rows in PRODUCT_SEED.items():
+        for row in rows:
+            tables[name].insert(row)
 
 
 def _ensure_indexes(engine: StrataEngine, tables: Mapping[str, Table]) -> None:
