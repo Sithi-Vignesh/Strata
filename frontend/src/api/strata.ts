@@ -30,6 +30,9 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
   } catch {
     throw new StrataApiError(0, "NETWORK_ERROR", "Could not reach the Strata backend.");
   }
+  if (response.ok && response.status === 204) {
+    return undefined as T;
+  }
   const payload = await parseJsonSafely(response);
 
   if (!response.ok) {

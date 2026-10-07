@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getUser, listProjectTasks, listUserWorkspaces } from "./product";
+import { createTask, deleteTask, getUser, listProjectTasks, listUserWorkspaces, updateTask } from "./product";
 import { StrataApiError } from "./strata";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -26,6 +26,20 @@ describe("product API client", () => {
   it("normalizes network failures", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     await expect(getUser(1)).rejects.toMatchObject({ code: "NETWORK_ERROR", status: 0 } satisfies Partial<StrataApiError>);
+  });
+
+  it("sends task mutations through product REST and preserves explicit null", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 9, project_id: 1, title: "New", description: null, status: "TODO", priority: "MEDIUM", assignee_user_id: null }, 201))
+      .mockResolvedValueOnce(jsonResponse({ id: 9, project_id: 1, title: "New", description: null, status: "TODO", priority: "MEDIUM", assignee_user_id: null }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createTask(1, { title: "New", assignee_user_id: null });
+    await updateTask(9, { description: null, assignee_user_id: null });
+    await deleteTask(9);
+    expect(fetchMock.mock.calls[0]).toEqual(["/api/projects/1/tasks", expect.objectContaining({ method: "POST", body: JSON.stringify({ title: "New", assignee_user_id: null }) })]);
+    expect(fetchMock.mock.calls[1]).toEqual(["/api/tasks/9", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ description: null, assignee_user_id: null }) })]);
+    expect(fetchMock.mock.calls[2]).toEqual(["/api/tasks/9", { method: "DELETE" }]);
   });
 });
 

@@ -100,7 +100,9 @@ export function ProductProvider({ children }: { children: ReactNode }) {
       const tasks = await listProjectTasks(state.selectedProjectId);
       if (version === requestVersion.current) setState((current) => ({ ...current, tasks, status: "ready" }));
     } catch (error) {
-      if (version === requestVersion.current) setState((current) => ({ ...current, status: "error", error: asError(error) }));
+      const taskError = asError(error);
+      if (version === requestVersion.current) setState((current) => ({ ...current, status: "error", error: taskError }));
+      throw taskError;
     }
   }, [state.selectedProjectId]);
 

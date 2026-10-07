@@ -27,4 +27,20 @@ export type Task = {
   assignee_user_id: number | null;
 };
 
+export type CreateTaskInput = {
+  title: string;
+  description?: string | null;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  assignee_user_id?: number | null;
+};
+
+export type UpdateTaskInput = Partial<{
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignee_user_id: number | null;
+}>;
+
 export type Note = { id: number; task_id: number; author_user_id: number; content: string };
