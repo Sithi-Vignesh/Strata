@@ -14,7 +14,7 @@ Current capabilities include:
 - a constrained SQL frontend supporting `CREATE TABLE`, `DROP TABLE`, `INSERT`, `SELECT`, `UPDATE`, and `DELETE`;
 - FastAPI integration, including SQL execution profiling;
 - a React demo interface for overview, task, board, SQL-console, and engine-explanation views.
-- a six-table product schema, deterministic development seed, persistent product indexes, and create/read `ProductService`.
+- a six-table product schema, deterministic development seed, persistent product indexes, and create/read/update/delete `ProductService` lifecycle.
 
 The current frontend pages use real engine data, but they are primarily demo/read-oriented. Product REST APIs, authentication, richer multi-user workflows, and collaboration are future work.
 
@@ -37,6 +37,8 @@ FastAPI (product routes planned next)
 The current product flow is `User -> Workspace membership -> Workspace -> Projects -> Tasks -> Notes`. Task assignees are nullable; a non-null assignee and a note author must belong to the task project's workspace.
 
 `ProductService` serializes each public operation with one process-local service-instance lock. This is not a database transaction, rollback mechanism, ACID guarantee, 2PL, MVCC, or crash-recovery mechanism.
+
+The initial deletion rules are intentionally explicit: deleting a task removes its notes first; deleting a project is rejected while tasks exist; deleting a workspace is rejected while projects exist and otherwise removes workspace memberships first. Those multi-row operations are process-serialized but not transactionally atomic.
 
 ### SELECT path
 
@@ -296,7 +298,7 @@ The application determines which DBMS work matters next.
 1. **Phase A — application-critical SQL:** `SELECT` / `INSERT` / `UPDATE` / `DELETE` foundation complete.
 2. **Phase B1:** six-table product schema, deterministic development seed, and persistent product indexes complete.
 3. **Phase B2A:** create/read `ProductService`, application integrity validation, and process-local service serialization complete.
-4. **Next B2B:** update and deletion lifecycle.
+4. **Phase B2B:** update and deletion lifecycle complete.
 5. **Next B3:** product REST API/lifecycle integration, followed by frontend product workflow integration.
 6. **Later full version:** authentication/session security, richer roles/permissions, timestamps/deadlines, invitations/member management, activity/notifications, richer task features, and justified real-time collaboration.
 7. **Later engine work driven by product needs:** constraints, stronger ID generation, transactions/concurrency control, locking/2PL/deadlock handling, WAL/recovery, and optimizer improvements.

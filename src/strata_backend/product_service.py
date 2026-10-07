@@ -1,4 +1,4 @@
-"""Create/read product workflow over Strata's direct Table APIs."""
+"""Create/read/update/delete product workflow over Strata's Table APIs."""
 
 from threading import RLock
 from typing import Callable, TypeVar
@@ -40,20 +40,27 @@ class ProductPermissionError(ProductServiceError):
     """Raised when required workspace-membership context is absent.
 
     This represents a domain rule only; authentication and full authorization are
-    intentionally outside the B2A service scope.
+    intentionally outside the current product-service scope.
     """
 
 
 ModelT = TypeVar("ModelT")
 
 
+class _Unset:
+    __slots__ = ()
+
+
+_UNSET = _Unset()
+
+
 class ProductService:
-    """Application integrity boundary for Strata's initial create/read workflow.
+    """Application integrity boundary for Strata's initial product lifecycle.
 
     Every public operation is serialized by this instance's process-local lock.
     That prevents duplicate ``MAX + 1``-style allocation within this service
-    instance only. It is not a database transaction, rollback mechanism, or
-    cross-process concurrency-control system.
+    instance only. It is not a database transaction, rollback mechanism, ACID
+    guarantee, database lock, 2PL, MVCC, or cross-process synchronization.
     """
 
     def __init__(self, engine: StrataEngine) -> None:
@@ -174,6 +181,113 @@ class ProductService:
             self._table("notes").insert((note.id, note.task_id, note.author_user_id, note.content))
             return note
 
+    def update_user(self, user_id: int, *, name: str | _Unset = _UNSET, email: str | _Unset = _UNSET) -> User:
+        with self._lock:
+            record_id, row = self._record_or_not_found("users", user_id)
+            current = self._user(row)
+            next_name = current.name if name is _UNSET else self._required_text("name", name)
+            next_email = current.email if email is _UNSET else self._required_text("email", email)
+            if email is not _UNSET and any(
+                user.id != current.id and user.email.casefold() == next_email.casefold()
+                for user in self._all_models("users", self._user)
+            ):
+                raise ProductConflictError(f"A user with email '{next_email}' already exists.")
+            updated = User(current.id, next_name, next_email)
+            if updated != current:
+                self._table("users").update(record_id, Tuple((updated.id, updated.name, updated.email), schema=row.schema))
+            return updated
+
+    def update_workspace(self, workspace_id: int, *, name: str | _Unset = _UNSET) -> Workspace:
+        with self._lock:
+            record_id, row = self._record_or_not_found("workspaces", workspace_id)
+            current = self._workspace(row)
+            updated = Workspace(current.id, current.name if name is _UNSET else self._required_text("name", name))
+            if updated != current:
+                self._table("workspaces").update(record_id, Tuple((updated.id, updated.name), schema=row.schema))
+            return updated
+
+    def update_project(
+        self, project_id: int, *, name: str | _Unset = _UNSET, description: str | None | _Unset = _UNSET,
+    ) -> Project:
+        with self._lock:
+            record_id, row = self._record_or_not_found("projects", project_id)
+            current = self._project(row)
+            next_name = current.name if name is _UNSET else self._required_text("name", name)
+            next_description = current.description if description is _UNSET else self._optional_text("description", description)
+            updated = Project(current.id, current.workspace_id, next_name, next_description)
+            if updated != current:
+                self._table("projects").update(record_id, Tuple((updated.id, updated.workspace_id, updated.name, updated.description), schema=row.schema))
+            return updated
+
+    def update_task(
+        self,
+        task_id: int,
+        *,
+        title: str | _Unset = _UNSET,
+        description: str | None | _Unset = _UNSET,
+        status: str | _Unset = _UNSET,
+        priority: str | _Unset = _UNSET,
+        assignee_user_id: int | None | _Unset = _UNSET,
+    ) -> Task:
+        with self._lock:
+            record_id, row = self._record_or_not_found("tasks", task_id)
+            current = self._task(row)
+            next_title = current.title if title is _UNSET else self._required_text("title", title)
+            next_description = current.description if description is _UNSET else self._optional_text("description", description)
+            next_status = current.status if status is _UNSET else self._allowed("status", status, TASK_STATUSES)
+            next_priority = current.priority if priority is _UNSET else self._allowed("priority", priority, TASK_PRIORITIES)
+            next_assignee = current.assignee_user_id if assignee_user_id is _UNSET else assignee_user_id
+            if next_assignee is not None:
+                self._user_for_id(next_assignee)
+                project = self._project_for_id(current.project_id)
+                self._require_membership(project.workspace_id, next_assignee, "assignee")
+            updated = Task(current.id, current.project_id, next_title, next_description, next_status, next_priority, next_assignee)
+            if updated != current:
+                self._table("tasks").update(record_id, Tuple((
+                    updated.id, updated.project_id, updated.title, updated.description,
+                    updated.status, updated.priority, updated.assignee_user_id,
+                ), schema=row.schema))
+            return updated
+
+    def update_note(self, note_id: int, *, content: str | _Unset = _UNSET) -> Note:
+        with self._lock:
+            record_id, row = self._record_or_not_found("notes", note_id)
+            current = self._note(row)
+            updated = Note(current.id, current.task_id, current.author_user_id, current.content if content is _UNSET else self._required_text("content", content))
+            if updated != current:
+                self._table("notes").update(record_id, Tuple((updated.id, updated.task_id, updated.author_user_id, updated.content), schema=row.schema))
+            return updated
+
+    def delete_note(self, note_id: int) -> None:
+        with self._lock:
+            record_id, _ = self._record_or_not_found("notes", note_id)
+            self._table("notes").delete(record_id)
+
+    def delete_task(self, task_id: int) -> None:
+        with self._lock:
+            record_id, _ = self._record_or_not_found("tasks", task_id)
+            note_records = self._indexed_records("notes", "task_id", task_id)
+            for note_record_id, _ in note_records:
+                self._table("notes").delete(note_record_id)
+            self._table("tasks").delete(record_id)
+
+    def delete_project(self, project_id: int) -> None:
+        with self._lock:
+            record_id, _ = self._record_or_not_found("projects", project_id)
+            if self._indexed_records("tasks", "project_id", project_id):
+                raise ProductConflictError("Cannot delete a project that still has tasks.")
+            self._table("projects").delete(record_id)
+
+    def delete_workspace(self, workspace_id: int) -> None:
+        with self._lock:
+            record_id, _ = self._record_or_not_found("workspaces", workspace_id)
+            if self._indexed_records("projects", "workspace_id", workspace_id):
+                raise ProductConflictError("Cannot delete a workspace that still has projects.")
+            member_records = self._indexed_records("workspace_members", "workspace_id", workspace_id)
+            for member_record_id, _ in member_records:
+                self._table("workspace_members").delete(member_record_id)
+            self._table("workspaces").delete(record_id)
+
     def _table(self, name: str) -> Table:
         if not self._engine.is_open:
             raise ProductServiceError("ProductService cannot use a closed StrataEngine.")
@@ -187,10 +301,14 @@ class ProductService:
         self._logical_id(logical_id)
         return next(((rid, row) for rid, row in self._table(table_name).scan() if row[0] == logical_id), None)
 
-    def _required(self, table_name: str, logical_id: int, mapper: Callable[[Tuple], ModelT]) -> ModelT:
+    def _record_or_not_found(self, table_name: str, logical_id: int) -> tuple[RecordId, Tuple]:
         found = self._find(table_name, logical_id)
         if found is None:
             raise ProductNotFoundError(f"{table_name.rstrip('s').replace('_', ' ').title()} {logical_id} does not exist.")
+        return found
+
+    def _required(self, table_name: str, logical_id: int, mapper: Callable[[Tuple], ModelT]) -> ModelT:
+        found = self._record_or_not_found(table_name, logical_id)
         return mapper(found[1])
 
     def _user_for_id(self, user_id: int) -> User:
@@ -212,11 +330,16 @@ class ProductService:
         return tuple(mapper(row) for _, row in self._table(table_name).scan())
 
     def _indexed_models(self, table_name: str, column_name: str, value: object, mapper: Callable[[Tuple], ModelT]) -> tuple[ModelT, ...]:
+        return tuple(mapper(row) for _, row in self._indexed_records(table_name, column_name, value))
+
+    def _indexed_records(self, table_name: str, column_name: str, value: object) -> tuple[tuple[RecordId, Tuple], ...]:
         table = self._table(table_name)
         index = table.index_for_column(column_name)
         if index is None:
-            return tuple(mapper(row) for _, row in table.scan() if row[table.schema.column_index(column_name)] == value)
-        return tuple(mapper(table.get(record_id)) for record_id in index.tree.search(value))
+            records = tuple((record_id, row) for record_id, row in table.scan() if row[table.schema.column_index(column_name)] == value)
+        else:
+            records = tuple((record_id, table.get(record_id)) for record_id in index.tree.search(value))
+        return tuple(sorted(records, key=lambda item: (item[0].page_id.value, item[0].slot_id)))
 
     def _members_for_workspace(self, workspace_id: int) -> tuple[WorkspaceMember, ...]:
         return self._indexed_models("workspace_members", "workspace_id", workspace_id, self._member)

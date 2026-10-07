@@ -126,3 +126,102 @@ def test_service_rejects_closed_engine(tmp_path: Path) -> None:
     engine = StrataEngine(tmp_path / "strata")
     with pytest.raises(ProductServiceError):
         ProductService(engine)
+
+
+def test_update_lifecycle_preserves_omitted_fields_and_nullable_values(tmp_path: Path) -> None:
+    engine, service = _service(tmp_path)
+    try:
+        user = service.update_user(1, name="Sithi Updated")
+        assert user == User(1, "Sithi Updated", "sithi@strata.local")
+        assert not isinstance(user, (RecordId, Tuple))
+        assert service.update_user(1) == user
+        with pytest.raises(ProductConflictError):
+            duplicate = service.create_user("Ada", "ada@strata.local")
+            service.update_user(1, email=duplicate.email.upper())
+        with pytest.raises(ProductValidationError):
+            service.update_user(1, email=" ")
+
+        project = service.update_project(1, name="Strata Updated", description=None)
+        assert project.workspace_id == 1 and project.description is None
+        workspace = service.update_workspace(1, name="Renamed Team")
+        assert workspace.id == 1 and workspace.name == "Renamed Team"
+        with pytest.raises(ProductValidationError):
+            service.update_workspace(1, name=" ")
+        task = service.update_task(1, title="Updated task", description=None, status="TODO", priority="MEDIUM", assignee_user_id=None)
+        assert task.id == 1 and task.project_id == 1 and task.description is None and task.assignee_user_id is None
+        reassigned = service.update_task(1, assignee_user_id=1)
+        assert reassigned.assignee_user_id == 1
+        other = service.create_user("Other", "other@strata.local")
+        with pytest.raises(ProductPermissionError):
+            service.update_task(1, assignee_user_id=other.id)
+        with pytest.raises(ProductNotFoundError):
+            service.update_task(1, assignee_user_id=999)
+        with pytest.raises(ProductValidationError):
+            service.update_task(1, status="BLOCKED")
+        with pytest.raises(ProductValidationError):
+            service.update_task(1, priority="URGENT")
+        with pytest.raises(ProductValidationError):
+            service.update_task(1, title=" ")
+
+        note = service.update_note(1, content="Updated note")
+        assert note.task_id == 1 and note.author_user_id == 1 and note.content == "Updated note"
+        with pytest.raises(ProductValidationError):
+            service.update_note(1, content=" ")
+        with pytest.raises(ProductNotFoundError):
+            service.update_project(999, name="Missing")
+    finally:
+        engine.close()
+
+
+def test_delete_lifecycle_enforces_dependencies_and_cascades_notes(tmp_path: Path) -> None:
+    engine, service = _service(tmp_path)
+    try:
+        with pytest.raises(ProductConflictError):
+            service.delete_project(1)
+        with pytest.raises(ProductConflictError):
+            service.delete_workspace(1)
+
+        standalone = service.create_project(1, "Standalone")
+        service.delete_project(standalone.id)
+        with pytest.raises(ProductNotFoundError):
+            service.get_project(standalone.id)
+
+        task = service.create_task(1, "Disposable")
+        first = service.create_note(task.id, 1, "First")
+        second = service.create_note(task.id, 1, "Second")
+        service.delete_note(first.id)
+        with pytest.raises(ProductNotFoundError):
+            service.get_note(first.id)
+        service.delete_task(task.id)
+        with pytest.raises(ProductNotFoundError):
+            service.get_task(task.id)
+        with pytest.raises(ProductNotFoundError):
+            service.get_note(second.id)
+        with pytest.raises(ProductNotFoundError):
+            service.delete_task(999)
+    finally:
+        engine.close()
+
+
+def test_workspace_delete_removes_memberships_and_b2b_changes_survive_reopen(tmp_path: Path) -> None:
+    database = tmp_path / "strata"
+    with StrataEngine(database) as engine:
+        bootstrap_product(engine)
+        service = ProductService(engine)
+        workspace = service.create_workspace("Disposable", 1)
+        service.delete_workspace(workspace.id)
+        with pytest.raises(ProductNotFoundError):
+            service.get_workspace(workspace.id)
+        assert not any(row[0] == workspace.id for _, row in engine.get_table("workspace_members").scan())
+        changed = service.update_task(1, status="IN_PROGRESS", assignee_user_id=None)
+
+    with StrataEngine(database) as engine:
+        bootstrap_product(engine)
+        assert ProductService(engine).get_task(changed.id) == changed
+
+
+def test_existing_service_rejects_operations_after_engine_closes(tmp_path: Path) -> None:
+    engine, service = _service(tmp_path)
+    engine.close()
+    with pytest.raises(ProductServiceError):
+        service.update_user(1, name="Closed")
