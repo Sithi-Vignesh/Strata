@@ -1,24 +1,38 @@
+import { useNavigate } from "react-router-dom";
+import type { ReactNode } from "react";
+
 import { useProduct } from "../app/ProductContext";
 import { DataState } from "../components/data/DataState";
 import { PageHeader } from "../components/layout/PageHeader";
+import { PriorityBadge } from "../components/tasks/PriorityBadge";
 import { StatusBadge } from "../components/tasks/StatusBadge";
-import { TASK_STATUSES } from "../types/product";
+import { TASK_PRIORITIES, TASK_STATUSES, type Project, type Task } from "../types/product";
 
 export function OverviewPage() {
-  const { tasks, selectedWorkspaceId, selectedProjectId, status, retry } = useProduct();
-  const summary = Object.fromEntries(TASK_STATUSES.map((taskStatus) => [taskStatus, tasks.filter((task) => task.status === taskStatus).length])) as Record<(typeof TASK_STATUSES)[number], number>;
+  const { projects, workspaceTasks, currentUser, selectedWorkspaceId, status, retry, selectProject } = useProduct();
+  const navigate = useNavigate();
+  const tasks = Object.values(workspaceTasks).flat();
+  const done = tasks.filter((task) => task.status === "DONE").length;
+  const assigned = tasks.filter((task) => task.assignee_user_id === currentUser.id);
+  const openProject = (projectId: number) => { selectProject(projectId); navigate("/tasks"); };
   const loading = status === "loading";
   const error = status === "error";
   return <section className="max-w-6xl">
-    <PageHeader description="Workspace activity and project progress at a glance." title="Overview" />
-    <DataState error={error} errorMessage="Could not load your Strata workspace." loading={loading} loadingMessage="Loading workspace summary…" onRetry={retry} />
+    <PageHeader description="Live workspace progress, priorities, and your assigned work." title="Dashboard" />
+    <DataState error={error} errorMessage="Could not load your Strata dashboard." loading={loading} loadingMessage="Loading dashboard…" onRetry={retry} />
     {!loading && !error && selectedWorkspaceId === null && <p className="py-10 text-sm text-[var(--strata-muted)]">No workspaces available.</p>}
-    {!loading && !error && selectedWorkspaceId !== null && selectedProjectId === null && <p className="py-10 text-sm text-[var(--strata-muted)]">No projects in this workspace.</p>}
-    {!loading && !error && selectedProjectId !== null && tasks.length > 0 && <div className="mt-6 space-y-8"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><SummaryMetric label="Total tasks" value={tasks.length} /><SummaryMetric label="To do" value={summary.TODO} /><SummaryMetric label="In progress" value={summary.IN_PROGRESS} /><SummaryMetric label="Done" value={summary.DONE} /></div><section aria-labelledby="work-by-status-heading"><h2 className="text-sm font-semibold text-[var(--strata-text)]" id="work-by-status-heading">Work by status</h2><div className="mt-3 divide-y divide-[var(--strata-border)] rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)]">{TASK_STATUSES.map((taskStatus) => <div className="flex items-center justify-between gap-4 px-4 py-3" key={taskStatus}><StatusBadge status={taskStatus} /><span className="text-sm font-semibold tabular-nums text-[var(--strata-text)]">{summary[taskStatus]}</span></div>)}</div></section></div>}
-    {!loading && !error && selectedProjectId !== null && tasks.length === 0 && <p className="py-10 text-sm text-[var(--strata-muted)]">No tasks in this project.</p>}
+    {!loading && !error && selectedWorkspaceId !== null && <div className="mt-6 space-y-8">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Projects" value={projects.length} /><Metric label="Total tasks" value={tasks.length} /><Metric label="Completed" value={done} /><Metric label="Completion" value={`${percent(done, tasks.length)}%`} /></div>
+      <div className="grid gap-6 lg:grid-cols-2"><Group title="Tasks by status">{TASK_STATUSES.map((item) => <Count key={item} label={<StatusBadge status={item} />} value={tasks.filter((task) => task.status === item).length} />)}</Group><Group title="Tasks by priority">{TASK_PRIORITIES.map((item) => <Count key={item} label={<PriorityBadge priority={item} />} value={tasks.filter((task) => task.priority === item).length} />)}</Group></div>
+      <section aria-labelledby="my-tasks"><h2 className="text-sm font-semibold" id="my-tasks">My Tasks</h2>{assigned.length === 0 ? <p className="mt-3 rounded-md border border-[var(--strata-border)] p-4 text-sm text-[var(--strata-muted)]">No tasks are assigned to you in this workspace.</p> : <div className="mt-3 divide-y rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)]">{assigned.map((task) => <button className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--strata-hover)]" key={task.id} onClick={() => openProject(task.project_id)} type="button"><span><span className="block text-sm font-medium">{task.title}</span><span className="text-xs text-[var(--strata-subtle)]">{projectName(projects, task.project_id)}</span></span><span className="flex gap-2"><StatusBadge status={task.status} /><PriorityBadge priority={task.priority} /></span></button>)}</div>}</section>
+      <section aria-labelledby="project-progress"><h2 className="text-sm font-semibold" id="project-progress">Project Progress</h2>{projects.length === 0 ? <p className="mt-3 rounded-md border border-[var(--strata-border)] p-4 text-sm text-[var(--strata-muted)]">No projects in this workspace.</p> : <div className="mt-3 grid gap-3 sm:grid-cols-2">{projects.map((project) => <ProjectProgress key={project.id} onOpen={openProject} project={project} tasks={workspaceTasks[project.id] ?? []} />)}</div>}</section>
+    </div>}
   </section>;
 }
 
-function SummaryMetric({ label, value }: { label: string; value: number }) {
-  return <article className="rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)] px-4 py-4"><p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--strata-subtle)]">{label}</p><p className="mt-2 text-2xl font-semibold tabular-nums text-[var(--strata-text)]">{value}</p></article>;
-}
+function Metric({ label, value }: { label: string; value: string | number }) { return <article className="rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)] p-4"><p className="text-xs font-semibold uppercase tracking-[.08em] text-[var(--strata-subtle)]">{label}</p><p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p></article>; }
+function Group({ title, children }: { title: string; children: ReactNode }) { return <section><h2 className="text-sm font-semibold">{title}</h2><div className="mt-3 divide-y rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)]">{children}</div></section>; }
+function Count({ label, value }: { label: ReactNode; value: number }) { return <div className="flex items-center justify-between px-4 py-3"><span>{label}</span><span className="text-sm font-semibold tabular-nums">{value}</span></div>; }
+function ProjectProgress({ project, tasks, onOpen }: { project: Project; tasks: Task[]; onOpen: (id: number) => void }) { const done = tasks.filter((task) => task.status === "DONE").length; const completion = percent(done, tasks.length); return <button className="rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)] p-4 text-left hover:bg-[var(--strata-hover)]" onClick={() => onOpen(project.id)} type="button"><div className="flex justify-between gap-3"><span className="font-medium">{project.name}</span><span className="text-sm text-[var(--strata-subtle)]">{done}/{tasks.length}</span></div><div className="mt-3 h-2 overflow-hidden rounded bg-slate-100"><div className="h-full bg-[var(--strata-accent)]" style={{ width: `${completion}%` }} /></div><p className="mt-2 text-xs text-[var(--strata-subtle)]">{tasks.length === 0 ? "No tasks yet" : `${completion}% complete`}</p></button>; }
+function percent(done: number, total: number) { return total === 0 ? 0 : Math.round((done / total) * 100); }
+function projectName(projects: Project[], projectId: number) { return projects.find((project) => project.id === projectId)?.name ?? "Project"; }
