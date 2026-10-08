@@ -1,7 +1,8 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { getHealth } from "../../api/strata";
-import { useProduct } from "../../app/ProductContext";
+import { useOptionalProduct } from "../../app/ProductContext";
+import { useAuth } from "../../app/AuthContext";
 import { NavIcon, type NavIconName } from "../icons/NavIcon";
 
 type ConnectionState = "checking" | "connected" | "unavailable";
@@ -41,6 +42,7 @@ const healthDot: Record<ConnectionState, string> = {
 
 export function AppShell() {
   const [connection, setConnection] = useState<ConnectionState>("checking");
+  const auth = useAuth();
 
   useEffect(() => {
     let active = true;
@@ -58,7 +60,7 @@ export function AppShell() {
       <header className="border-b border-[var(--strata-border)] bg-[var(--strata-surface)] md:hidden">
         <div className="flex items-center justify-between px-5 py-4">
           <Wordmark />
-          <HealthStatus connection={connection} />
+          <div className="flex items-center gap-4"><HealthStatus connection={connection} /><AccountControls auth={auth} /></div>
         </div>
         <nav aria-label="Primary navigation" className="overflow-x-auto border-t border-[var(--strata-border)] px-3">
           <div className="flex min-w-max items-center gap-5 py-2">
@@ -86,16 +88,23 @@ export function AppShell() {
           ))}
         </nav>
         <footer className="border-t border-[var(--strata-border)] px-6 py-5">
+          <AccountControls auth={auth} />
           <HealthStatus connection={connection} />
           <p className="mt-3 text-xs text-[var(--strata-subtle)]">Powered by Strata DB</p>
         </footer>
       </aside>
 
       <main className="min-w-0 flex-1 px-5 py-8 sm:px-8 sm:py-10 lg:px-10">
+        {auth.user && auth.error && <div className="mb-5 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-950" role="alert">Could not sign you out. Please try again.</div>}
         <Outlet />
       </main>
     </div>
   );
+}
+
+function AccountControls({ auth }: { auth: ReturnType<typeof useAuth> }) {
+  if (auth.user === null) return null;
+  return <div className="flex items-center justify-between gap-2"><span className="truncate text-xs font-medium text-[var(--strata-text)]">{auth.user.name}</span><button className="text-xs font-semibold text-[var(--strata-accent)] disabled:opacity-60" disabled={auth.logoutPending} onClick={() => { void auth.logout(); }} type="button">{auth.logoutPending ? "Signing out…" : "Sign out"}</button></div>;
 }
 
 function Wordmark() {
@@ -103,7 +112,9 @@ function Wordmark() {
 }
 
 function WorkspaceSelector() {
-  const { workspaces, projects, selectedWorkspaceId, selectedProjectId, selectWorkspace, selectProject, status } = useProduct();
+  const product = useOptionalProduct();
+  if (product === null) return null;
+  const { workspaces, projects, selectedWorkspaceId, selectedProjectId, selectWorkspace, selectProject, status } = product;
   return (
     <div className="px-6 pb-2">
       <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]" htmlFor="workspace-selector">Workspace</label>

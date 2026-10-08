@@ -1,6 +1,14 @@
 import { requestJson } from "./strata";
 import type { CreateNoteInput, CreateTaskInput, Note, Project, Task, UpdateNoteInput, UpdateTaskInput, User, Workspace, WorkspaceMember } from "../types/product";
 
+export type LoginInput = { email: string; password: string };
+export type RegisterInput = { name: string; email: string; password: string };
+
+export function getCurrentUser(): Promise<User> { return requestJson<User>("/api/auth/me"); }
+export function login(input: LoginInput): Promise<User> { return requestJson<User>("/api/auth/login", jsonRequest("POST", input)); }
+export function register(input: RegisterInput): Promise<User> { return requestJson<User>("/api/auth/register", jsonRequest("POST", input)); }
+export function logout(): Promise<void> { return requestJson<void>("/api/auth/logout", { method: "POST" }); }
+
 export function getUser(userId: number): Promise<User> {
   return requestJson<User>(`/api/users/${userId}`);
 }
