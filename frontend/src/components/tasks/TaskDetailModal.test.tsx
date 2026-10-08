@@ -36,7 +36,7 @@ describe("TaskDetailModal", () => {
     expect(productApi.createNote).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("New note"), { target: { value: "New note" } });
     fireEvent.click(screen.getByRole("button", { name: "Add note" }));
-    await waitFor(() => expect(productApi.createNote).toHaveBeenCalledWith(7, { author_user_id: 1, content: "New note" }));
+    await waitFor(() => expect(productApi.createNote).toHaveBeenCalledWith(7, { content: "New note" }));
     expect(productApi.listTaskNotes).toHaveBeenCalledTimes(2);
   });
 

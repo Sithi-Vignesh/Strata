@@ -96,8 +96,9 @@ class ProductService:
         self._clock = clock
         self._token_factory = token_factory
 
-    def get_user(self, user_id: int) -> User:
+    def get_user(self, user_id: int, *, actor_user_id: int | None = None) -> User:
         with self._lock:
+            self._require_self(user_id, actor_user_id)
             return self._user_for_id(user_id)
 
     def create_session(self, user_id: int) -> CreatedSession:
@@ -210,46 +211,59 @@ class ProductService:
             record_id, _ = self._record_or_not_found("sessions", session_id)
             self._table("sessions").delete(record_id)
 
-    def get_workspace(self, workspace_id: int) -> Workspace:
+    def get_workspace(self, workspace_id: int, *, actor_user_id: int | None = None) -> Workspace:
         with self._lock:
-            return self._workspace_for_id(workspace_id)
+            workspace = self._workspace_for_id(workspace_id)
+            self._require_visible(workspace.id, actor_user_id)
+            return workspace
 
-    def list_workspaces_for_user(self, user_id: int) -> tuple[Workspace, ...]:
+    def list_workspaces_for_user(self, user_id: int, *, actor_user_id: int | None = None) -> tuple[Workspace, ...]:
         with self._lock:
+            self._require_self(user_id, actor_user_id)
             self._user_for_id(user_id)
             workspace_ids = {member.workspace_id for member in self._members_for_user(user_id)}
             return tuple(sorted((self._workspace_for_id(item) for item in workspace_ids), key=lambda item: item.id))
 
-    def list_workspace_members(self, workspace_id: int) -> tuple[WorkspaceMember, ...]:
+    def list_workspace_members(self, workspace_id: int, *, actor_user_id: int | None = None) -> tuple[WorkspaceMember, ...]:
         with self._lock:
             self._workspace_for_id(workspace_id)
+            self._require_visible(workspace_id, actor_user_id)
             return tuple(sorted(self._members_for_workspace(workspace_id), key=lambda item: (item.user_id, item.role)))
 
-    def get_project(self, project_id: int) -> Project:
+    def get_project(self, project_id: int, *, actor_user_id: int | None = None) -> Project:
         with self._lock:
-            return self._project_for_id(project_id)
+            project = self._project_for_id(project_id)
+            self._require_visible(project.workspace_id, actor_user_id)
+            return project
 
-    def list_projects(self, workspace_id: int) -> tuple[Project, ...]:
+    def list_projects(self, workspace_id: int, *, actor_user_id: int | None = None) -> tuple[Project, ...]:
         with self._lock:
             self._workspace_for_id(workspace_id)
+            self._require_visible(workspace_id, actor_user_id)
             return tuple(sorted((self._validated_project(row) for _, row in self._indexed_records("projects", "workspace_id", workspace_id)), key=lambda item: item.id))
 
-    def get_task(self, task_id: int) -> Task:
+    def get_task(self, task_id: int, *, actor_user_id: int | None = None) -> Task:
         with self._lock:
-            return self._task_for_id(task_id)
+            task = self._task_for_id(task_id)
+            self._require_visible(self._project_for_id(task.project_id).workspace_id, actor_user_id)
+            return task
 
-    def list_tasks(self, project_id: int) -> tuple[Task, ...]:
+    def list_tasks(self, project_id: int, *, actor_user_id: int | None = None) -> tuple[Task, ...]:
         with self._lock:
-            self._project_for_id(project_id)
+            project = self._project_for_id(project_id)
+            self._require_visible(project.workspace_id, actor_user_id)
             return tuple(sorted((self._validated_task(row) for _, row in self._indexed_records("tasks", "project_id", project_id)), key=lambda item: item.id))
 
-    def get_note(self, note_id: int) -> Note:
+    def get_note(self, note_id: int, *, actor_user_id: int | None = None) -> Note:
         with self._lock:
-            return self._note_for_id(note_id)
+            note = self._note_for_id(note_id)
+            self._require_visible(self._workspace_for_note(note).id, actor_user_id)
+            return note
 
-    def list_notes(self, task_id: int) -> tuple[Note, ...]:
+    def list_notes(self, task_id: int, *, actor_user_id: int | None = None) -> tuple[Note, ...]:
         with self._lock:
-            self._task_for_id(task_id)
+            task = self._task_for_id(task_id)
+            self._require_visible(self._project_for_id(task.project_id).workspace_id, actor_user_id)
             return tuple(sorted(self._indexed_models("notes", "task_id", task_id, self._note), key=lambda item: item.id))
 
     def create_user(self, name: str, email: str) -> User:
@@ -271,22 +285,28 @@ class ProductService:
             self._user_for_id(owner_user_id)
             now = self._now()
             workspace = Workspace(self._next_id("workspaces"), name, "COLLABORATIVE", now, now)
-            # This pair of inserts is process-serialized but is not rollback-safe.
-            self._table("workspaces").insert((
-                workspace.id, workspace.name, workspace.kind,
-                workspace.created_at, workspace.updated_at,
-            ))
-            self._create_membership(workspace.id, owner_user_id, "OWNER")
+            inserted: list[tuple[str, RecordId]] = []
+            try:
+                inserted.append(("workspaces", self._registration_insert("workspaces", (
+                    workspace.id, workspace.name, workspace.kind,
+                    workspace.created_at, workspace.updated_at,
+                ))))
+                inserted.append(("workspace_members", self._registration_insert("workspace_members", (
+                    workspace.id, owner_user_id, "OWNER",
+                ))))
+            except Exception as exc:
+                if self._compensate_registration(inserted):
+                    raise ProductRegistrationCompensationError("Workspace provisioning compensation did not complete successfully.") from exc
+                raise
             return workspace
 
-    def create_project(self, workspace_id: int, name: str, description: str | None = None) -> Project:
+    def create_project(self, workspace_id: int, name: str, description: str | None = None, *, actor_user_id: int | None = None) -> Project:
         with self._lock:
             self._workspace_for_id(workspace_id)
+            self._require_visible(workspace_id, actor_user_id)
             name = self._required_text("name", name)
             description = self._optional_text("description", description)
-            # P1A compatibility only: unauthenticated project creation is attributed
-            # to the workspace's sole OWNER until authenticated actor propagation lands.
-            creator_id = self._workspace_owner_id(workspace_id)
+            creator_id = self._workspace_owner_id(workspace_id) if actor_user_id is None else actor_user_id
             now = self._now()
             project = Project(self._next_id("projects"), workspace_id, name, description, creator_id, now, now)
             self._table("projects").insert((
@@ -303,9 +323,12 @@ class ProductService:
         status: str = "TODO",
         priority: str = "MEDIUM",
         assignee_user_id: int | None = None,
+        *,
+        actor_user_id: int | None = None,
     ) -> Task:
         with self._lock:
             project = self._project_for_id(project_id)
+            self._require_visible(project.workspace_id, actor_user_id)
             title = self._required_text("title", title)
             description = self._optional_text("description", description)
             self._allowed("status", status, TASK_STATUSES)
@@ -313,11 +336,10 @@ class ProductService:
             if assignee_user_id is not None:
                 self._user_for_id(assignee_user_id)
                 self._require_membership(project.workspace_id, assignee_user_id, "assignee")
-            self._validate_project_creator(project)
             now = self._now()
             task = Task(
                 self._next_id("tasks"), project_id, title, description, status, priority,
-                assignee_user_id, project.created_by_user_id, now, now,
+                assignee_user_id, project.created_by_user_id if actor_user_id is None else actor_user_id, now, now,
             )
             self._table("tasks").insert((
                 task.id, task.project_id, task.title, task.description,
@@ -326,11 +348,14 @@ class ProductService:
             ))
             return task
 
-    def create_note(self, task_id: int, author_user_id: int, content: str) -> Note:
+    def create_note(self, task_id: int, author_user_id: int, content: str, *, actor_user_id: int | None = None) -> Note:
         with self._lock:
             task = self._task_for_id(task_id)
             self._user_for_id(author_user_id)
             project = self._project_for_id(task.project_id)
+            self._require_visible(project.workspace_id, actor_user_id)
+            if actor_user_id is not None and author_user_id != actor_user_id:
+                raise ProductPermissionError("Note author must be the authenticated user.")
             self._require_membership(project.workspace_id, author_user_id, "note author")
             now = self._now()
             note = Note(self._next_id("notes"), task_id, author_user_id, self._required_text("content", content), now, now)
@@ -340,8 +365,9 @@ class ProductService:
             ))
             return note
 
-    def update_user(self, user_id: int, *, name: str | _Unset = _UNSET, email: str | _Unset = _UNSET) -> User:
+    def update_user(self, user_id: int, *, actor_user_id: int | None = None, name: str | _Unset = _UNSET, email: str | _Unset = _UNSET) -> User:
         with self._lock:
+            self._require_self(user_id, actor_user_id)
             record_id, row = self._record_or_not_found("users", user_id)
             current = self._user(row)
             next_name = current.name if name is _UNSET else self._required_text("name", name)
@@ -359,10 +385,13 @@ class ProductService:
                 ), schema=row.schema))
             return updated
 
-    def update_workspace(self, workspace_id: int, *, name: str | _Unset = _UNSET) -> Workspace:
+    def update_workspace(self, workspace_id: int, *, actor_user_id: int | None = None, name: str | _Unset = _UNSET) -> Workspace:
         with self._lock:
             record_id, row = self._record_or_not_found("workspaces", workspace_id)
             current = self._workspace(row)
+            self._require_owner(current, actor_user_id)
+            if current.kind == "PERSONAL" and actor_user_id is not None:
+                raise ProductPermissionError("Personal workspaces cannot be modified.")
             next_name = current.name if name is _UNSET else self._required_text("name", name)
             updated = Workspace(
                 current.id, next_name, current.kind, current.created_at,
@@ -375,11 +404,12 @@ class ProductService:
             return updated
 
     def update_project(
-        self, project_id: int, *, name: str | _Unset = _UNSET, description: str | None | _Unset = _UNSET,
+        self, project_id: int, *, actor_user_id: int | None = None, name: str | _Unset = _UNSET, description: str | None | _Unset = _UNSET,
     ) -> Project:
         with self._lock:
             record_id, row = self._record_or_not_found("projects", project_id)
             current = self._validated_project(row)
+            self._require_visible(current.workspace_id, actor_user_id)
             next_name = current.name if name is _UNSET else self._required_text("name", name)
             next_description = current.description if description is _UNSET else self._optional_text("description", description)
             changed = next_name != current.name or next_description != current.description
@@ -404,10 +434,12 @@ class ProductService:
         status: str | _Unset = _UNSET,
         priority: str | _Unset = _UNSET,
         assignee_user_id: int | None | _Unset = _UNSET,
+        actor_user_id: int | None = None,
     ) -> Task:
         with self._lock:
             record_id, row = self._record_or_not_found("tasks", task_id)
             current = self._validated_task(row)
+            self._require_visible(self._project_for_id(current.project_id).workspace_id, actor_user_id)
             next_title = current.title if title is _UNSET else self._required_text("title", title)
             next_description = current.description if description is _UNSET else self._optional_text("description", description)
             next_status = current.status if status is _UNSET else self._allowed("status", status, TASK_STATUSES)
@@ -435,10 +467,11 @@ class ProductService:
                 ), schema=row.schema))
             return updated
 
-    def update_note(self, note_id: int, *, content: str | _Unset = _UNSET) -> Note:
+    def update_note(self, note_id: int, *, actor_user_id: int | None = None, content: str | _Unset = _UNSET) -> Note:
         with self._lock:
             record_id, row = self._record_or_not_found("notes", note_id)
             current = self._note(row)
+            self._require_note_author(current, actor_user_id)
             next_content = current.content if content is _UNSET else self._required_text("content", content)
             updated = Note(
                 current.id, current.task_id, current.author_user_id, next_content,
@@ -452,29 +485,38 @@ class ProductService:
                 ), schema=row.schema))
             return updated
 
-    def delete_note(self, note_id: int) -> None:
+    def delete_note(self, note_id: int, *, actor_user_id: int | None = None) -> None:
         with self._lock:
-            record_id, _ = self._record_or_not_found("notes", note_id)
+            record_id, row = self._record_or_not_found("notes", note_id)
+            self._require_note_author(self._note(row), actor_user_id)
             self._table("notes").delete(record_id)
 
-    def delete_task(self, task_id: int) -> None:
+    def delete_task(self, task_id: int, *, actor_user_id: int | None = None) -> None:
         with self._lock:
-            record_id, _ = self._record_or_not_found("tasks", task_id)
+            record_id, row = self._record_or_not_found("tasks", task_id)
+            task = self._validated_task(row)
+            self._require_creator_or_owner_fallback(self._project_for_id(task.project_id).workspace_id, task.created_by_user_id, actor_user_id)
             note_records = self._indexed_records("notes", "task_id", task_id)
             for note_record_id, _ in note_records:
                 self._table("notes").delete(note_record_id)
             self._table("tasks").delete(record_id)
 
-    def delete_project(self, project_id: int) -> None:
+    def delete_project(self, project_id: int, *, actor_user_id: int | None = None) -> None:
         with self._lock:
-            record_id, _ = self._record_or_not_found("projects", project_id)
+            record_id, row = self._record_or_not_found("projects", project_id)
+            project = self._validated_project(row)
+            self._require_creator_or_owner_fallback(project.workspace_id, project.created_by_user_id, actor_user_id)
             if self._indexed_records("tasks", "project_id", project_id):
                 raise ProductConflictError("Cannot delete a project that still has tasks.")
             self._table("projects").delete(record_id)
 
-    def delete_workspace(self, workspace_id: int) -> None:
+    def delete_workspace(self, workspace_id: int, *, actor_user_id: int | None = None) -> None:
         with self._lock:
-            record_id, _ = self._record_or_not_found("workspaces", workspace_id)
+            record_id, row = self._record_or_not_found("workspaces", workspace_id)
+            workspace = self._workspace(row)
+            self._require_owner(workspace, actor_user_id)
+            if workspace.kind == "PERSONAL" and actor_user_id is not None:
+                raise ProductPermissionError("Personal workspaces cannot be deleted.")
             if self._indexed_records("projects", "workspace_id", workspace_id):
                 raise ProductConflictError("Cannot delete a workspace that still has projects.")
             member_records = self._indexed_records("workspace_members", "workspace_id", workspace_id)
@@ -607,7 +649,6 @@ class ProductService:
 
     def _validate_project_creator(self, project: Project) -> None:
         self._user_for_id(project.created_by_user_id)
-        self._require_membership(project.workspace_id, project.created_by_user_id, "project creator")
 
     def _validated_project(self, row: Tuple) -> Project:
         project = self._project(row)
@@ -618,11 +659,56 @@ class ProductService:
         task = self._task(row)
         project = self._project_for_id(task.project_id)
         self._user_for_id(task.created_by_user_id)
-        self._require_membership(project.workspace_id, task.created_by_user_id, "task creator")
         return task
 
+    def _workspace_for_note(self, note: Note) -> Workspace:
+        return self._workspace_for_id(self._project_for_id(self._task_for_id(note.task_id).project_id).workspace_id)
+
+    def _require_self(self, user_id: int, actor_user_id: int | None) -> None:
+        if actor_user_id is not None and actor_user_id != user_id:
+            raise ProductNotFoundError("Resource does not exist.")
+
+    def _active_membership(self, workspace_id: int, user_id: int) -> WorkspaceMember | None:
+        try:
+            user = self._user_for_id(user_id)
+        except ProductNotFoundError:
+            return None
+        if user.account_state != "ACTIVE":
+            return None
+        return next((member for member in self._members_for_workspace(workspace_id) if member.user_id == user_id), None)
+
+    def _require_visible(self, workspace_id: int, actor_user_id: int | None) -> WorkspaceMember | None:
+        if actor_user_id is None:
+            return None
+        member = self._active_membership(workspace_id, actor_user_id)
+        if member is None:
+            raise ProductNotFoundError("Resource does not exist.")
+        return member
+
+    def _require_owner(self, workspace: Workspace, actor_user_id: int | None) -> None:
+        member = self._require_visible(workspace.id, actor_user_id)
+        if member is not None and member.role != "OWNER":
+            raise ProductPermissionError("Workspace owner permission is required.")
+
+    def _require_creator_or_owner_fallback(self, workspace_id: int, creator_user_id: int, actor_user_id: int | None) -> None:
+        member = self._require_visible(workspace_id, actor_user_id)
+        if member is None:
+            return
+        if actor_user_id == creator_user_id:
+            return
+        if member.role == "OWNER" and self._active_membership(workspace_id, creator_user_id) is None:
+            return
+        raise ProductPermissionError("Only the creator may delete this resource.")
+
+    def _require_note_author(self, note: Note, actor_user_id: int | None) -> None:
+        if actor_user_id is None:
+            return
+        self._require_visible(self._workspace_for_note(note).id, actor_user_id)
+        if note.author_user_id != actor_user_id:
+            raise ProductPermissionError("Only the note author may modify this note.")
+
     def _require_membership(self, workspace_id: int, user_id: int, subject: str) -> None:
-        if not any(member.user_id == user_id for member in self._members_for_workspace(workspace_id)):
+        if self._active_membership(workspace_id, user_id) is None:
             raise ProductPermissionError(f"User {user_id} is not a member of the workspace for this {subject}.")
 
     @staticmethod

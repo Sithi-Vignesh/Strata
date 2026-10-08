@@ -33,7 +33,6 @@ class UpdateUser(_RequestModel):
 
 class CreateWorkspace(_RequestModel):
     name: str
-    owner_user_id: int
 
 
 class UpdateWorkspace(_RequestModel):
@@ -67,7 +66,6 @@ class UpdateTask(_RequestModel):
 
 
 class CreateNote(_RequestModel):
-    author_user_id: int
     content: str
 
 

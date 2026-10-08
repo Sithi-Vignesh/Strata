@@ -45,9 +45,9 @@ describe("product API client", () => {
   it("uses product REST paths for note CRUD", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([])).mockResolvedValueOnce(jsonResponse({ id: 1, task_id: 2, author_user_id: 1, content: "Note" }, 201)).mockResolvedValueOnce(jsonResponse({ id: 1, task_id: 2, author_user_id: 1, content: "Edited" })).mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
-    await listTaskNotes(2); await createNote(2, { author_user_id: 1, content: "Note" }); await updateNote(1, { content: "Edited" }); await deleteNote(1);
+    await listTaskNotes(2); await createNote(2, { content: "Note" }); await updateNote(1, { content: "Edited" }); await deleteNote(1);
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(["/api/tasks/2/notes", "/api/tasks/2/notes", "/api/notes/1", "/api/notes/1"]);
-    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: "POST", body: JSON.stringify({ author_user_id: 1, content: "Note" }) });
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: "POST", body: JSON.stringify({ content: "Note" }) });
     expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: "PATCH", body: JSON.stringify({ content: "Edited" }) });
   });
 });

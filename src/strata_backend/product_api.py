@@ -173,132 +173,132 @@ def get_authenticated_user(current_user: User = Depends(get_current_user)) -> Us
 
 
 @router.get("/users/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.get_user(user_id)
+def get_user(user_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.get_user(user_id, actor_user_id=current_user.id)
 
 
 @router.patch("/users/{user_id}", response_model=UserResponse)
-def update_user(user_id: int, body: UpdateUser, service: ProductService = Depends(get_product_service)) -> object:
-    return service.update_user(user_id, **_provided_fields(body))
+def update_user(user_id: int, body: UpdateUser, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.update_user(user_id, actor_user_id=current_user.id, **_provided_fields(body))
 
 
 @router.get("/users/{user_id}/workspaces", response_model=list[WorkspaceResponse])
-def list_workspaces_for_user(user_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.list_workspaces_for_user(user_id)
+def list_workspaces_for_user(user_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.list_workspaces_for_user(user_id, actor_user_id=current_user.id)
 
 
 @router.post("/workspaces", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)
-def create_workspace(body: CreateWorkspace, service: ProductService = Depends(get_product_service)) -> object:
-    return service.create_workspace(body.name, body.owner_user_id)
+def create_workspace(body: CreateWorkspace, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.create_workspace(body.name, current_user.id)
 
 
 @router.get("/workspaces/{workspace_id}", response_model=WorkspaceResponse)
-def get_workspace(workspace_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.get_workspace(workspace_id)
+def get_workspace(workspace_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.get_workspace(workspace_id, actor_user_id=current_user.id)
 
 
 @router.patch("/workspaces/{workspace_id}", response_model=WorkspaceResponse)
 def update_workspace(
-    workspace_id: int, body: UpdateWorkspace, service: ProductService = Depends(get_product_service),
+    workspace_id: int, body: UpdateWorkspace, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
 ) -> object:
-    return service.update_workspace(workspace_id, **_provided_fields(body))
+    return service.update_workspace(workspace_id, actor_user_id=current_user.id, **_provided_fields(body))
 
 
 @router.delete("/workspaces/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_workspace(workspace_id: int, service: ProductService = Depends(get_product_service)) -> Response:
-    service.delete_workspace(workspace_id)
+def delete_workspace(workspace_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> Response:
+    service.delete_workspace(workspace_id, actor_user_id=current_user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/workspaces/{workspace_id}/members", response_model=list[WorkspaceMemberResponse])
-def list_workspace_members(workspace_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.list_workspace_members(workspace_id)
+def list_workspace_members(workspace_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.list_workspace_members(workspace_id, actor_user_id=current_user.id)
 
 
 @router.get("/workspaces/{workspace_id}/projects", response_model=list[ProjectResponse])
-def list_projects(workspace_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.list_projects(workspace_id)
+def list_projects(workspace_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.list_projects(workspace_id, actor_user_id=current_user.id)
 
 
 @router.post("/workspaces/{workspace_id}/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(
-    workspace_id: int, body: CreateProject, service: ProductService = Depends(get_product_service),
+    workspace_id: int, body: CreateProject, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
 ) -> object:
-    return service.create_project(workspace_id, body.name, body.description)
+    return service.create_project(workspace_id, body.name, body.description, actor_user_id=current_user.id)
 
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)
-def get_project(project_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.get_project(project_id)
+def get_project(project_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.get_project(project_id, actor_user_id=current_user.id)
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectResponse)
-def update_project(project_id: int, body: UpdateProject, service: ProductService = Depends(get_product_service)) -> object:
-    return service.update_project(project_id, **_provided_fields(body))
+def update_project(project_id: int, body: UpdateProject, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.update_project(project_id, actor_user_id=current_user.id, **_provided_fields(body))
 
 
 @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_project(project_id: int, service: ProductService = Depends(get_product_service)) -> Response:
-    service.delete_project(project_id)
+def delete_project(project_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> Response:
+    service.delete_project(project_id, actor_user_id=current_user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/projects/{project_id}/tasks", response_model=list[TaskResponse])
-def list_tasks(project_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.list_tasks(project_id)
+def list_tasks(project_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.list_tasks(project_id, actor_user_id=current_user.id)
 
 
 @router.post("/projects/{project_id}/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
-def create_task(project_id: int, body: CreateTask, service: ProductService = Depends(get_product_service)) -> object:
+def create_task(project_id: int, body: CreateTask, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
     return service.create_task(
         project_id,
         body.title,
         description=body.description,
         status=body.status,
         priority=body.priority,
-        assignee_user_id=body.assignee_user_id,
+        assignee_user_id=body.assignee_user_id, actor_user_id=current_user.id,
     )
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
-def get_task(task_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.get_task(task_id)
+def get_task(task_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.get_task(task_id, actor_user_id=current_user.id)
 
 
 @router.patch("/tasks/{task_id}", response_model=TaskResponse)
-def update_task(task_id: int, body: UpdateTask, service: ProductService = Depends(get_product_service)) -> object:
-    return service.update_task(task_id, **_provided_fields(body))
+def update_task(task_id: int, body: UpdateTask, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.update_task(task_id, actor_user_id=current_user.id, **_provided_fields(body))
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_task(task_id: int, service: ProductService = Depends(get_product_service)) -> Response:
-    service.delete_task(task_id)
+def delete_task(task_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> Response:
+    service.delete_task(task_id, actor_user_id=current_user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/tasks/{task_id}/notes", response_model=list[NoteResponse])
-def list_notes(task_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.list_notes(task_id)
+def list_notes(task_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.list_notes(task_id, actor_user_id=current_user.id)
 
 
 @router.post("/tasks/{task_id}/notes", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
-def create_note(task_id: int, body: CreateNote, service: ProductService = Depends(get_product_service)) -> object:
-    return service.create_note(task_id, body.author_user_id, body.content)
+def create_note(task_id: int, body: CreateNote, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.create_note(task_id, current_user.id, body.content, actor_user_id=current_user.id)
 
 
 @router.get("/notes/{note_id}", response_model=NoteResponse)
-def get_note(note_id: int, service: ProductService = Depends(get_product_service)) -> object:
-    return service.get_note(note_id)
+def get_note(note_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.get_note(note_id, actor_user_id=current_user.id)
 
 
 @router.patch("/notes/{note_id}", response_model=NoteResponse)
-def update_note(note_id: int, body: UpdateNote, service: ProductService = Depends(get_product_service)) -> object:
-    return service.update_note(note_id, **_provided_fields(body))
+def update_note(note_id: int, body: UpdateNote, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return service.update_note(note_id, actor_user_id=current_user.id, **_provided_fields(body))
 
 
 @router.delete("/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_note(note_id: int, service: ProductService = Depends(get_product_service)) -> Response:
-    service.delete_note(note_id)
+def delete_note(note_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> Response:
+    service.delete_note(note_id, actor_user_id=current_user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

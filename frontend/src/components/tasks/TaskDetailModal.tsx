@@ -33,7 +33,7 @@ export function TaskDetailModal({ task, currentUser, memberUsers, onClose, onEdi
     if (!content) { setComposerError("Note content cannot be blank."); return; }
     if (!currentUser) { setComposerError("Current user is unavailable."); return; }
     setAdding(true); setComposerError(null); setNotice(null);
-    try { await createNote(task.id, { author_user_id: currentUser.id, content }); setComposer(""); try { await refreshNotes(); } catch { setNotice("Note was added, but the latest notes could not be refreshed."); } }
+    try { await createNote(task.id, { content }); setComposer(""); try { await refreshNotes(); } catch { setNotice("Note was added, but the latest notes could not be refreshed."); } }
     catch (reason) { setComposerError(message(reason, "Could not add note.")); }
     finally { setAdding(false); }
   };
