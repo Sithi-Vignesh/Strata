@@ -25,6 +25,15 @@ describe("TaskModal", () => {
     await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(task, { description: null, assignee_user_id: null }));
   });
 
+  it("keeps the form open when a save succeeds but the task refresh fails", async () => {
+    const onCreate = vi.fn().mockResolvedValue(false);
+    render(<TaskModal memberUsers={members} onClose={vi.fn()} onCreate={onCreate} onUpdate={vi.fn()} task={null} />);
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Follow up" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(onCreate).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("requires explicit confirmation before deletion", () => {
     const onConfirm = vi.fn().mockResolvedValue(true);
     render(<TaskDeleteConfirmation onCancel={vi.fn()} onConfirm={onConfirm} task={task} />);

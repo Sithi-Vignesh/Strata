@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { updateTask } from "../api/product";
 import { useProduct } from "../app/ProductContext";
 import { DataState } from "../components/data/DataState";
@@ -16,6 +16,7 @@ export function BoardPage() {
   const [detail, setDetail] = useState<Task | null>(null);
   const loading = status === "loading";
   const error = status === "error";
+  useEffect(() => { if (detail !== null && detail.project_id !== selectedProjectId) setDetail(null); }, [detail, selectedProjectId]);
   const board = Object.fromEntries(TASK_STATUSES.map((taskStatus) => [taskStatus, tasks.filter((task) => task.status === taskStatus)])) as Record<TaskStatus, Task[]>;
   const moveTask = async (task: Task, nextStatus: TaskStatus) => { if (task.status === nextStatus || pendingTaskId !== null) return; setPendingTaskId(task.id); setMutationError(null); setNotice(null); try { await updateTask(task.id, { status: nextStatus }); try { await refreshTasks(); } catch { setNotice("Task status was saved, but the latest task list could not be refreshed."); } } catch (reason) { setMutationError(reason instanceof Error ? reason.message : "Could not update task status."); } finally { setPendingTaskId(null); } };
   return <section className="max-w-none"><PageHeader description="Follow task progress across each stage of work." title="Board" /><DataState error={error} errorMessage="Could not load tasks for this project." loading={loading} loadingMessage="Loading board…" onRetry={retry} />

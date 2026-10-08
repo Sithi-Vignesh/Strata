@@ -28,9 +28,10 @@ export function TaskModal({ task, memberUsers, onClose, onCreate, onUpdate }: {
     setSubmitting(true);
     setError(null);
     try {
-      if (task) await onUpdate(task, changedFields(task, { ...values, title }));
-      else await onCreate({ title, description: values.description || null, status: values.status, priority: values.priority, assignee_user_id: assigneeId(values.assignee) });
-      onClose();
+      const saved = task
+        ? await onUpdate(task, changedFields(task, { ...values, title }))
+        : await onCreate({ title, description: values.description || null, status: values.status, priority: values.priority, assignee_user_id: assigneeId(values.assignee) });
+      if (saved) onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save this task.");
     } finally { setSubmitting(false); }

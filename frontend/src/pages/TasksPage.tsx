@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createTask, deleteTask, updateTask } from "../api/product";
 import { useProduct } from "../app/ProductContext";
 import { DataState } from "../components/data/DataState";
@@ -16,6 +16,11 @@ export function TasksPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const loading = status === "loading";
   const error = status === "error";
+  useEffect(() => {
+    if (editing !== null && editing !== "new" && editing.project_id !== selectedProjectId) setEditing(null);
+    if (deleting !== null && deleting.project_id !== selectedProjectId) setDeleting(null);
+    if (detail !== null && detail.project_id !== selectedProjectId) setDetail(null);
+  }, [selectedProjectId, editing, deleting, detail]);
   const afterMutation = async (action: () => Promise<unknown>, verb: string) => { await action(); try { await refreshTasks(); return true; } catch { setNotice(`Task was ${verb}, but the latest task list could not be refreshed.`); return false; } };
   const create = async (input: CreateTaskInput) => { if (selectedProjectId === null) throw new Error("Select a project before creating a task."); return afterMutation(() => createTask(selectedProjectId, input), "created"); };
   const update = (task: Task, input: UpdateTaskInput) => Object.keys(input).length === 0 ? Promise.resolve(true) : afterMutation(() => updateTask(task.id, input), "saved");
