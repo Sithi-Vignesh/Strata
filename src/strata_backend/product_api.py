@@ -7,11 +7,13 @@ from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Request,
 from fastapi.responses import JSONResponse
 
 from strata_backend.product_schemas import (
+    AddWorkspaceMember,
     CreateNote,
     CreateProject,
     CreateTask,
     CreateWorkspace,
     NoteResponse,
+    OwnershipTransferResponse,
     LoginRequest,
     RegisterAccount,
     ProjectResponse,
@@ -21,6 +23,7 @@ from strata_backend.product_schemas import (
     UpdateTask,
     UpdateUser,
     UpdateWorkspace,
+    TransferWorkspaceOwnership,
     UserResponse,
     WorkspaceMemberResponse,
     WorkspaceResponse,
@@ -212,7 +215,30 @@ def delete_workspace(workspace_id: int, current_user: User = Depends(get_current
 
 @router.get("/workspaces/{workspace_id}/members", response_model=list[WorkspaceMemberResponse])
 def list_workspace_members(workspace_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
-    return service.list_workspace_members(workspace_id, actor_user_id=current_user.id)
+    return [_member_response(member, service) for member in service.list_workspace_members(workspace_id, actor_user_id=current_user.id)]
+
+
+@router.post("/workspaces/{workspace_id}/members", response_model=WorkspaceMemberResponse, status_code=status.HTTP_201_CREATED)
+def add_workspace_member(
+    workspace_id: int, body: AddWorkspaceMember, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    return _member_response(service.add_workspace_member(workspace_id, body.user_id, actor_user_id=current_user.id), service)
+
+
+@router.post("/workspaces/{workspace_id}/transfer-ownership", response_model=OwnershipTransferResponse)
+def transfer_workspace_ownership(
+    workspace_id: int, body: TransferWorkspaceOwnership, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    previous_owner_id, owner_id = service.transfer_workspace_ownership(workspace_id, body.new_owner_user_id, actor_user_id=current_user.id)
+    return {"workspace_id": workspace_id, "owner_user_id": owner_id, "previous_owner_user_id": previous_owner_id}
+
+
+@router.delete("/workspaces/{workspace_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_workspace_member(
+    workspace_id: int, user_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> Response:
+    service.remove_workspace_member(workspace_id, user_id, actor_user_id=current_user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/workspaces/{workspace_id}/projects", response_model=list[ProjectResponse])
@@ -305,3 +331,12 @@ def delete_note(note_id: int, current_user: User = Depends(get_current_user), se
 def _provided_fields(body: object) -> dict[str, object]:
     """Return only PATCH fields explicitly supplied by the client, including nulls."""
     return {field: getattr(body, field) for field in body.model_fields_set}  # type: ignore[attr-defined]
+
+
+def _member_response(member: object, service: ProductService) -> dict[str, object]:
+    """Return only safe identity fields for an authorized workspace membership."""
+    user = service.get_user(member.user_id)  # type: ignore[attr-defined]
+    return {
+        "workspace_id": member.workspace_id, "user_id": member.user_id, "role": member.role,  # type: ignore[attr-defined]
+        "name": user.name, "email": user.email, "account_state": user.account_state,
+    }

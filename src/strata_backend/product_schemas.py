@@ -39,6 +39,14 @@ class UpdateWorkspace(_RequestModel):
     name: str | None = None
 
 
+class AddWorkspaceMember(_RequestModel):
+    user_id: int
+
+
+class TransferWorkspaceOwnership(_RequestModel):
+    new_owner_user_id: int
+
+
 class CreateProject(_RequestModel):
     name: str
     description: str | None = None
@@ -94,6 +102,15 @@ class WorkspaceMemberResponse(_ResponseModel):
     workspace_id: int
     user_id: int
     role: str
+    name: str
+    email: str
+    account_state: str
+
+
+class OwnershipTransferResponse(_ResponseModel):
+    workspace_id: int
+    owner_user_id: int
+    previous_owner_user_id: int
 
 
 class ProjectResponse(_ResponseModel):

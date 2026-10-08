@@ -64,7 +64,10 @@ def test_product_api_registration_workspace_and_health_contract(tmp_path) -> Non
         assert client.get(f"/api/workspaces/{workspace_id}").json() == workspace.json()
         assert workspace.json() in client.get(f"/api/users/{user_id}/workspaces").json()
         assert client.patch(f"/api/workspaces/{workspace_id}", json={"name": "Ada Workspace"}).status_code == 200
-        assert client.get(f"/api/workspaces/{workspace_id}/members").json() == [{"workspace_id": workspace_id, "user_id": user_id, "role": "OWNER"}]
+        assert client.get(f"/api/workspaces/{workspace_id}/members").json() == [{
+            "workspace_id": workspace_id, "user_id": user_id, "role": "OWNER",
+            "name": "Ada Lovelace", "email": "ada@strata.local", "account_state": "ACTIVE",
+        }]
         deleted = client.delete(f"/api/workspaces/{workspace_id}")
         assert deleted.status_code == 204 and deleted.content == b""
         cors = client.options(f"/api/users/{user_id}", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "PATCH"})

@@ -57,6 +57,10 @@ class ProductRegistrationCompensationError(ProductServiceError):
     """Raised when registration's best-effort reverse compensation is incomplete."""
 
 
+class ProductMembershipCompensationError(ProductServiceError):
+    """Raised when a membership mutation cannot be fully compensated."""
+
+
 ModelT = TypeVar("ModelT")
 
 
@@ -229,6 +233,83 @@ class ProductService:
             self._workspace_for_id(workspace_id)
             self._require_visible(workspace_id, actor_user_id)
             return tuple(sorted(self._members_for_workspace(workspace_id), key=lambda item: (item.user_id, item.role)))
+
+    def add_workspace_member(self, workspace_id: int, user_id: int, *, actor_user_id: int | None = None) -> WorkspaceMember:
+        with self._lock:
+            workspace = self._workspace_for_id(workspace_id)
+            self._require_owner(workspace, actor_user_id)
+            self._require_collaborative(workspace)
+            user = self._user_for_id(user_id)
+            if user.account_state != "ACTIVE":
+                raise ProductConflictError("Only ACTIVE users can be added to a workspace.")
+            return self._create_membership(workspace_id, user_id, "MEMBER")
+
+    def transfer_workspace_ownership(self, workspace_id: int, new_owner_user_id: int, *, actor_user_id: int | None = None) -> tuple[int, int]:
+        with self._lock:
+            workspace = self._workspace_for_id(workspace_id)
+            self._require_owner(workspace, actor_user_id)
+            self._require_collaborative(workspace)
+            current_owner_id = self._workspace_owner_id(workspace_id)
+            new_owner = self._user_for_id(new_owner_user_id)
+            if new_owner.id == current_owner_id or new_owner.account_state != "ACTIVE":
+                raise ProductConflictError("New owner must be a different ACTIVE workspace MEMBER.")
+            records = self._indexed_records("workspace_members", "workspace_id", workspace_id)
+            by_user = {self._member(row).user_id: (record_id, row) for record_id, row in records}
+            target = by_user.get(new_owner.id)
+            current = by_user.get(current_owner_id)
+            if target is None or self._member(target[1]).role != "MEMBER" or current is None:
+                raise ProductConflictError("New owner must be a workspace MEMBER.")
+            try:
+                self._set_membership_role(current[0], current[1], "MEMBER")
+                self._set_membership_role(target[0], target[1], "OWNER")
+            except Exception as exc:
+                failed = False
+                try:
+                    self._set_membership_role(current[0], current[1], "OWNER")
+                except Exception:
+                    failed = True
+                try:
+                    self._set_membership_role(target[0], target[1], "MEMBER")
+                except Exception:
+                    failed = True
+                if failed:
+                    raise ProductMembershipCompensationError("Ownership transfer compensation did not complete successfully.") from exc
+                raise
+            return current_owner_id, new_owner.id
+
+    def remove_workspace_member(self, workspace_id: int, user_id: int, *, actor_user_id: int | None = None) -> None:
+        with self._lock:
+            workspace = self._workspace_for_id(workspace_id)
+            self._require_owner(workspace, actor_user_id)
+            self._require_collaborative(workspace)
+            self._user_for_id(user_id)
+            member_records = self._indexed_records("workspace_members", "workspace_id", workspace_id)
+            member_record = next(((record_id, row) for record_id, row in member_records if self._member(row).user_id == user_id), None)
+            if member_record is None:
+                raise ProductNotFoundError("Workspace member does not exist.")
+            if self._member(member_record[1]).role == "OWNER":
+                raise ProductConflictError("Transfer ownership before removing the workspace OWNER.")
+            changed: list[tuple[RecordId, Tuple]] = []
+            try:
+                for project_record_id, project_row in self._indexed_records("projects", "workspace_id", workspace_id):
+                    del project_record_id
+                    project = self._validated_project(project_row)
+                    for task_record_id, task_row in self._indexed_records("tasks", "project_id", project.id):
+                        task = self._validated_task(task_row)
+                        if task.assignee_user_id == user_id:
+                            changed.append((task_record_id, task_row))
+                            self._unassign_task(task_record_id, task_row)
+                self._delete_membership(member_record[0])
+            except Exception as exc:
+                failed = False
+                for task_record_id, task_row in reversed(changed):
+                    try:
+                        self._table("tasks").update(task_record_id, task_row)
+                    except Exception:
+                        failed = True
+                if failed:
+                    raise ProductMembershipCompensationError("Member removal compensation did not complete successfully.") from exc
+                raise
 
     def get_project(self, project_id: int, *, actor_user_id: int | None = None) -> Project:
         with self._lock:
@@ -625,14 +706,39 @@ class ProductService:
         return self._indexed_models("workspace_members", "user_id", user_id, self._member)
 
     def _create_membership(self, workspace_id: int, user_id: int, role: str) -> WorkspaceMember:
-        self._workspace_for_id(workspace_id)
-        self._user_for_id(user_id)
+        workspace = self._workspace_for_id(workspace_id)
+        self._require_collaborative(workspace)
+        user = self._user_for_id(user_id)
+        if user.account_state != "ACTIVE":
+            raise ProductConflictError("Only ACTIVE users can be added to a workspace.")
         self._allowed("role", role, WORKSPACE_ROLES)
         if any(member.user_id == user_id for member in self._members_for_workspace(workspace_id)):
             raise ProductConflictError(f"User {user_id} is already a workspace member.")
         member = WorkspaceMember(workspace_id, user_id, role)
         self._table("workspace_members").insert((member.workspace_id, member.user_id, member.role))
         return member
+
+    def _set_membership_role(self, record_id: RecordId, row: Tuple, role: str) -> None:
+        member = self._member(row)
+        self._table("workspace_members").update(
+            record_id, Tuple((member.workspace_id, member.user_id, role), schema=row.schema),
+        )
+
+    def _delete_membership(self, record_id: RecordId) -> None:
+        self._table("workspace_members").delete(record_id)
+
+    def _unassign_task(self, record_id: RecordId, row: Tuple) -> None:
+        task = self._validated_task(row)
+        updated = Task(
+            task.id, task.project_id, task.title, task.description, task.status,
+            task.priority, None, task.created_by_user_id, task.created_at,
+            self._later_than(task.updated_at),
+        )
+        self._table("tasks").update(record_id, Tuple((
+            updated.id, updated.project_id, updated.title, updated.description,
+            updated.status, updated.priority, updated.assignee_user_id,
+            updated.created_by_user_id, updated.created_at, updated.updated_at,
+        ), schema=row.schema))
 
     def _workspace_owner_id(self, workspace_id: int) -> int:
         owners = [member.user_id for member in self._members_for_workspace(workspace_id) if member.role == "OWNER"]
@@ -689,6 +795,11 @@ class ProductService:
         member = self._require_visible(workspace.id, actor_user_id)
         if member is not None and member.role != "OWNER":
             raise ProductPermissionError("Workspace owner permission is required.")
+
+    @staticmethod
+    def _require_collaborative(workspace: Workspace) -> None:
+        if workspace.kind == "PERSONAL":
+            raise ProductPermissionError("Personal workspaces do not support membership changes.")
 
     def _require_creator_or_owner_fallback(self, workspace_id: int, creator_user_id: int, actor_user_id: int | None) -> None:
         member = self._require_visible(workspace_id, actor_user_id)
