@@ -1,8 +1,9 @@
 export type User = { id: number; name: string; email: string };
 
-export type Workspace = { id: number; name: string };
+export type Workspace = { id: number; name: string; kind: "PERSONAL" | "COLLABORATIVE" };
 
-export type WorkspaceMember = { workspace_id: number; user_id: number; role: string };
+export type WorkspaceMember = { workspace_id: number; user_id: number; role: "OWNER" | "MEMBER"; name: string; email: string; account_state: string };
+export type OwnershipTransfer = { workspace_id: number; owner_user_id: number; previous_owner_user_id: number };
 
 export type Project = {
   id: number;

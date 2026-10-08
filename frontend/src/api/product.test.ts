@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createNote, createTask, deleteNote, deleteTask, getUser, listProjectTasks, listTaskNotes, listUserWorkspaces, updateNote, updateTask } from "./product";
+import { addWorkspaceMember, createNote, createTask, createWorkspace, deleteNote, deleteTask, getUser, listProjectTasks, listTaskNotes, listUserWorkspaces, removeWorkspaceMember, transferWorkspaceOwnership, updateNote, updateTask } from "./product";
 import { StrataApiError } from "./strata";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -40,6 +40,20 @@ describe("product API client", () => {
     expect(fetchMock.mock.calls[0]).toEqual(["/api/projects/1/tasks", expect.objectContaining({ method: "POST", body: JSON.stringify({ title: "New", assignee_user_id: null }) })]);
     expect(fetchMock.mock.calls[1]).toEqual(["/api/tasks/9", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ description: null, assignee_user_id: null }) })]);
     expect(fetchMock.mock.calls[2]).toEqual(["/api/tasks/9", { method: "DELETE" }]);
+  });
+
+  it("uses authenticated workspace and membership mutation routes", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 3, name: "Team", kind: "COLLABORATIVE" }, 201))
+      .mockResolvedValueOnce(jsonResponse({ workspace_id: 3, user_id: 8, role: "MEMBER", name: "Ada", email: "ada@strata.local", account_state: "ACTIVE" }, 201))
+      .mockResolvedValueOnce(jsonResponse({ workspace_id: 3, owner_user_id: 8, previous_owner_user_id: 1 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createWorkspace("Team"); await addWorkspaceMember(3, 8); await transferWorkspaceOwnership(3, 8); await removeWorkspaceMember(3, 1);
+    expect(fetchMock.mock.calls[0]).toEqual(["/api/workspaces", expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Team" }) })]);
+    expect(fetchMock.mock.calls[1]).toEqual(["/api/workspaces/3/members", expect.objectContaining({ method: "POST", body: JSON.stringify({ user_id: 8 }) })]);
+    expect(fetchMock.mock.calls[2]).toEqual(["/api/workspaces/3/transfer-ownership", expect.objectContaining({ method: "POST", body: JSON.stringify({ new_owner_user_id: 8 }) })]);
+    expect(fetchMock.mock.calls[3]).toEqual(["/api/workspaces/3/members/1", { method: "DELETE" }]);
   });
 
   it("uses product REST paths for note CRUD", async () => {

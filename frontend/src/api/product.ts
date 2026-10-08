@@ -1,5 +1,5 @@
 import { requestJson } from "./strata";
-import type { CreateNoteInput, CreateTaskInput, Note, Project, Task, UpdateNoteInput, UpdateTaskInput, User, Workspace, WorkspaceMember } from "../types/product";
+import type { CreateNoteInput, CreateTaskInput, Note, OwnershipTransfer, Project, Task, UpdateNoteInput, UpdateTaskInput, User, Workspace, WorkspaceMember } from "../types/product";
 
 export type LoginInput = { email: string; password: string };
 export type RegisterInput = { name: string; email: string; password: string };
@@ -16,6 +16,7 @@ export function getUser(userId: number): Promise<User> {
 export function listUserWorkspaces(userId: number): Promise<Workspace[]> {
   return requestJson<Workspace[]>(`/api/users/${userId}/workspaces`);
 }
+export function createWorkspace(name: string): Promise<Workspace> { return requestJson<Workspace>("/api/workspaces", jsonRequest("POST", { name })); }
 
 export function listWorkspaceProjects(workspaceId: number): Promise<Project[]> {
   return requestJson<Project[]>(`/api/workspaces/${workspaceId}/projects`);
@@ -24,6 +25,9 @@ export function listWorkspaceProjects(workspaceId: number): Promise<Project[]> {
 export function listWorkspaceMembers(workspaceId: number): Promise<WorkspaceMember[]> {
   return requestJson<WorkspaceMember[]>(`/api/workspaces/${workspaceId}/members`);
 }
+export function addWorkspaceMember(workspaceId: number, userId: number): Promise<WorkspaceMember> { return requestJson<WorkspaceMember>(`/api/workspaces/${workspaceId}/members`, jsonRequest("POST", { user_id: userId })); }
+export function removeWorkspaceMember(workspaceId: number, userId: number): Promise<void> { return requestJson<void>(`/api/workspaces/${workspaceId}/members/${userId}`, { method: "DELETE" }); }
+export function transferWorkspaceOwnership(workspaceId: number, userId: number): Promise<OwnershipTransfer> { return requestJson<OwnershipTransfer>(`/api/workspaces/${workspaceId}/transfer-ownership`, jsonRequest("POST", { new_owner_user_id: userId })); }
 
 export function listProjectTasks(projectId: number): Promise<Task[]> {
   return requestJson<Task[]>(`/api/projects/${projectId}/tasks`);

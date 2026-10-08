@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { getHealth } from "../../api/strata";
+import { addWorkspaceMember, createWorkspace, removeWorkspaceMember, transferWorkspaceOwnership } from "../../api/product";
 import { useOptionalProduct } from "../../app/ProductContext";
 import { useAuth } from "../../app/AuthContext";
 import { NavIcon, type NavIconName } from "../icons/NavIcon";
@@ -114,7 +115,15 @@ function Wordmark() {
 function WorkspaceSelector() {
   const product = useOptionalProduct();
   if (product === null) return null;
-  const { workspaces, projects, selectedWorkspaceId, selectedProjectId, selectWorkspace, selectProject, status } = product;
+  const { workspaces, projects, members, currentUser, selectedWorkspaceId, selectedProjectId, selectWorkspace, selectProject, refreshWorkspace, status } = product;
+  const [name, setName] = useState("");
+  const [memberId, setMemberId] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const selected = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
+  const owner = members.some((member) => member.user_id === currentUser.id && member.role === "OWNER");
+  const mutate = async (action: () => Promise<unknown>, success: string) => { try { await action(); await refreshWorkspace(); setMessage(success); } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Could not update workspace membership."); } };
+  const add = () => { const userId = Number(memberId); if (!Number.isInteger(userId) || userId < 1 || selectedWorkspaceId === null) { setMessage("Enter a valid user ID."); return; } void mutate(() => addWorkspaceMember(selectedWorkspaceId, userId), "Member added."); };
+  const create = () => { const value = name.trim(); if (!value) { setMessage("Enter a workspace name."); return; } void (async () => { try { const workspace = await createWorkspace(value); await refreshWorkspace(); selectWorkspace(workspace.id); setName(""); setMessage("Collaborative workspace created."); } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Could not create workspace."); } })(); };
   return (
     <div className="px-6 pb-2">
       <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]" htmlFor="workspace-selector">Workspace</label>
@@ -125,6 +134,12 @@ function WorkspaceSelector() {
       <select className="mt-1 w-full rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)] px-2 py-1.5 text-xs text-[var(--strata-text)] disabled:opacity-60" disabled={status === "loading" || projects.length === 0} id="project-selector" onChange={(event) => selectProject(Number(event.target.value))} value={selectedProjectId ?? ""}>
         {projects.length === 0 ? <option value="">No projects</option> : projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
       </select>
+      <div className="mt-4 border-t border-[var(--strata-border)] pt-3">
+        <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]" htmlFor="new-workspace">New collaborative workspace</label>
+        <div className="mt-1 flex gap-1"><input className="min-w-0 flex-1 rounded-md border border-[var(--strata-border)] px-2 py-1 text-xs" id="new-workspace" onChange={(event) => setName(event.target.value)} value={name} /><button className="rounded-md bg-[var(--strata-accent)] px-2 text-xs font-semibold text-white" onClick={create} type="button">Create</button></div>
+      </div>
+      {selected?.kind === "COLLABORATIVE" && <section aria-label="Workspace members" className="mt-4 border-t border-[var(--strata-border)] pt-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]">Members {owner && <span className="text-[var(--strata-accent)]">· Owner</span>}</p><ul className="mt-2 space-y-1">{members.map((member) => <li className="flex items-center justify-between gap-1 text-xs" key={member.user_id}><span className="truncate">{member.name} <span className="text-[var(--strata-subtle)]">({member.role})</span></span>{owner && member.role === "MEMBER" && <span className="flex gap-1"><button className="text-[var(--strata-accent)]" onClick={() => { if (window.confirm(`Transfer ownership to ${member.name}?`)) void mutate(() => transferWorkspaceOwnership(selected.id, member.user_id), "Ownership transferred."); }} type="button">Make owner</button><button className="text-rose-700" onClick={() => { if (window.confirm(`Remove ${member.name}? Their tasks will be unassigned.`)) void mutate(() => removeWorkspaceMember(selected.id, member.user_id), "Member removed and their tasks unassigned."); }} type="button">Remove</button></span>}</li>)}</ul>{owner && <div className="mt-2 flex gap-1"><input aria-label="Member user ID" className="min-w-0 flex-1 rounded-md border border-[var(--strata-border)] px-2 py-1 text-xs" inputMode="numeric" onChange={(event) => setMemberId(event.target.value)} placeholder="User ID" value={memberId} /><button className="rounded-md border border-[var(--strata-border)] px-2 text-xs font-semibold" onClick={add} type="button">Add</button></div>}</section>}
+      {message && <p className="mt-2 text-xs text-[var(--strata-muted)]" role="status">{message}</p>}
     </div>
   );
 }
