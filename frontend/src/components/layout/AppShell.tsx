@@ -1,170 +1,108 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
 import { getHealth } from "../../api/strata";
-import { addWorkspaceMember, createWorkspace, removeWorkspaceMember, transferWorkspaceOwnership } from "../../api/product";
+import { addWorkspaceMember, createWorkspace, getUnreadNotificationCount } from "../../api/product";
 import { useOptionalProduct } from "../../app/ProductContext";
 import { useAuth } from "../../app/AuthContext";
+import { useTheme } from "../../app/ThemeContext";
+import { Avatar } from "../ui/Avatar";
 import { NavIcon, type NavIconName } from "../icons/NavIcon";
+import { CommandPalette } from "./CommandPalette";
 
 type ConnectionState = "checking" | "connected" | "unavailable";
 
 const navigation = [
-  {
-    label: "Workspace",
-    items: [
-      { to: "/", label: "Overview", icon: "overview" },
-      { to: "/tasks", label: "Tasks", icon: "tasks" },
-      { to: "/board", label: "Board", icon: "board" },
-    ],
-  },
-  {
-    label: "Database",
-    items: [
-      { to: "/sql", label: "SQL Console", icon: "sql" },
-      { to: "/engine", label: "Engine", icon: "engine" },
-    ],
-  },
-] as const satisfies ReadonlyArray<{
-  label: string;
-  items: ReadonlyArray<{ to: string; label: string; icon: NavIconName }>;
-}>;
+  { label: "Global", items: [
+    { to: "/", label: "Common Dashboard", icon: "overview" },
+    { to: "/all-tasks", label: "All Tasks", icon: "list" },
+    { to: "/inbox", label: "Inbox", icon: "inbox" },
+  ] },
+  { label: "Workspace", items: [
+    { to: "/workspace", label: "Workspace Dashboard", icon: "overview" },
+    { to: "/my-tasks", label: "My Tasks", icon: "tasks" },
+    { to: "/projects", label: "Projects", icon: "projects" },
+    { to: "/tasks", label: "Tasks", icon: "list" },
+    { to: "/board", label: "Board", icon: "board" },
+    { to: "/members", label: "Members", icon: "members" },
+  ] },
+  { label: "Database", items: [
+    { to: "/sql", label: "SQL Console", icon: "sql" },
+    { to: "/engine", label: "Engine", icon: "engine" },
+  ] },
+] as const satisfies ReadonlyArray<{ label: string; items: ReadonlyArray<{ to: string; label: string; icon: NavIconName }> }>;
 
-const healthCopy: Record<ConnectionState, string> = {
-  checking: "Checking backend…",
-  connected: "Backend: Connected",
-  unavailable: "Backend: Unavailable",
-};
-
-const healthDot: Record<ConnectionState, string> = {
-  checking: "bg-slate-400",
-  connected: "bg-emerald-500",
-  unavailable: "bg-rose-500",
-};
+const routeTitles: Record<string, string> = { "/": "Common Dashboard", "/workspace": "Workspace Dashboard", "/all-tasks": "All Tasks", "/my-tasks": "My Tasks", "/inbox": "Inbox", "/projects": "Projects", "/tasks": "Tasks", "/board": "Board", "/members": "Members", "/sql": "SQL Lab", "/engine": "Database Engine", "/settings": "Settings" };
 
 export function AppShell() {
   const [connection, setConnection] = useState<ConnectionState>("checking");
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const unreadVersion = useRef(0);
   const auth = useAuth();
+  const product = useOptionalProduct();
+  const location = useLocation();
+  const workspace = product?.workspaces.find((item) => item.id === product.selectedWorkspaceId);
+  const project = product?.projects.find((item) => item.id === product.selectedProjectId);
 
-  useEffect(() => {
-    let active = true;
-    void getHealth().then(
-      () => active && setConnection("connected"),
-      () => active && setConnection("unavailable"),
-    );
-    return () => {
-      active = false;
-    };
-  }, []);
+  useEffect(() => { let active = true; void getHealth().then(() => active && setConnection("connected"), () => active && setConnection("unavailable")); return () => { active = false; }; }, []);
+  useEffect(() => setMobileOpen(false), [location.pathname]);
+  useEffect(() => { if (!auth.user) { ++unreadVersion.current; setUnreadCount(0); return; } let active = true; const refresh = () => { const version = ++unreadVersion.current; void getUnreadNotificationCount().then((result) => { if (active && version === unreadVersion.current) setUnreadCount(result.unread_count); }, () => { if (active && version === unreadVersion.current) setUnreadCount(0); }); }; refresh(); window.addEventListener("focus", refresh); window.addEventListener("strata:notifications-changed", refresh); return () => { active = false; ++unreadVersion.current; window.removeEventListener("focus", refresh); window.removeEventListener("strata:notifications-changed", refresh); }; }, [auth.user, location.pathname]);
 
-  return (
-    <div className="min-h-svh bg-[var(--strata-canvas)] text-[var(--strata-text)] md:flex">
-      <header className="border-b border-[var(--strata-border)] bg-[var(--strata-surface)] md:hidden">
-        <div className="flex items-center justify-between px-5 py-4">
-          <Wordmark />
-          <div className="flex items-center gap-4"><HealthStatus connection={connection} /><AccountControls auth={auth} /></div>
-        </div>
-        <nav aria-label="Primary navigation" className="overflow-x-auto border-t border-[var(--strata-border)] px-3">
-          <div className="flex min-w-max items-center gap-5 py-2">
-            {navigation.map((group) => (
-              <div className="flex items-center gap-1" key={group.label}>
-                <span className="px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]">{group.label}</span>
-                {group.items.map((item) => <NavigationLink item={item} key={item.to} />)}
-              </div>
-            ))}
-          </div>
-        </nav>
+  return <div className="app-shell">
+    <a className="skip-link" href="#main-content">Skip to content</a>
+    <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
+      <div className="sidebar-brand"><Wordmark /><button aria-label="Close navigation" className="icon-button mobile-only" onClick={() => setMobileOpen(false)} type="button">×</button></div>
+      <WorkspaceSelector />
+      <nav aria-label="Primary navigation" className="sidebar-nav">{navigation.map((group) => <section className="nav-group" key={group.label}><h2>{group.label}</h2><div>{group.items.map((item) => <NavigationLink item={item} key={item.to} unreadCount={item.to === "/inbox" ? unreadCount : 0} />)}</div></section>)}</nav>
+      <div className="sidebar-footer">
+        <NavLink className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`} to="/settings"><NavIcon name="settings" /><span>Settings & appearance</span></NavLink>
+        {auth.user && <div className="account-summary"><Avatar name={auth.user.name} /><div><strong>{auth.user.name}</strong><span>{auth.user.email}</span></div><button aria-label="Sign out" className="icon-button" disabled={auth.logoutPending} onClick={() => void auth.logout()} title="Sign out" type="button">↗</button></div>}
+        <HealthStatus connection={connection} />
+      </div>
+    </aside>
+    {mobileOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setMobileOpen(false)} type="button" />}
+    <div className="app-main">
+      <header className="topbar">
+        <button aria-label="Open navigation" className="icon-button menu-button" onClick={() => setMobileOpen(true)} type="button"><NavIcon name="menu" /></button>
+        <div className="breadcrumbs"><span>{["/", "/all-tasks", "/inbox"].includes(location.pathname) ? "Global" : (workspace?.name ?? "No workspace")}</span>{project && ["/tasks", "/board"].includes(location.pathname) && <><b>/</b><span>{project.name}</span></>}<b>/</b><strong>{routeTitles[location.pathname] ?? "Workspace"}</strong></div>
+        <div className="topbar-actions"><HealthStatus connection={connection} compact />{auth.user && <button aria-label="Open command palette" className="command-trigger" onClick={() => window.dispatchEvent(new Event("strata:open-command-palette"))} title="Open command palette (Ctrl+K)" type="button"><span aria-hidden="true">⌕</span><kbd>Ctrl K</kbd></button>}<ThemeButton />{auth.user && <><Avatar name={auth.user.name} size="sm" /><button aria-label="Sign out" className="icon-button mobile-account-action" disabled={auth.logoutPending} onClick={() => void auth.logout()} type="button">↗</button></>}</div>
       </header>
-
-      <aside className="sticky top-0 hidden h-svh w-64 shrink-0 flex-col border-r border-[var(--strata-border)] bg-[var(--strata-surface)] md:flex">
-        <div className="px-6 py-6"><Wordmark /></div>
-        <WorkspaceSelector />
-        <nav aria-label="Primary navigation" className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
-          {navigation.map((group) => (
-            <section className="mt-6 first:mt-0" key={group.label}>
-              <h2 className="px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]">{group.label}</h2>
-              <div className="mt-2 space-y-1">
-                {group.items.map((item) => <NavigationLink item={item} key={item.to} />)}
-              </div>
-            </section>
-          ))}
-        </nav>
-        <footer className="border-t border-[var(--strata-border)] px-6 py-5">
-          <AccountControls auth={auth} />
-          <HealthStatus connection={connection} />
-          <p className="mt-3 text-xs text-[var(--strata-subtle)]">Powered by Strata DB</p>
-        </footer>
-      </aside>
-
-      <main className="min-w-0 flex-1 px-5 py-8 sm:px-8 sm:py-10 lg:px-10">
-        {auth.user && auth.error && <div className="mb-5 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-950" role="alert">Could not sign you out. Please try again.</div>}
+      <nav aria-label="Mobile navigation" className="mobile-nav">{navigation.map((group) => <div key={group.label}>{group.items.map((item) => <NavigationLink item={item} key={item.to} unreadCount={item.to === "/inbox" ? unreadCount : 0} />)}</div>)}</nav>
+      <main id="main-content" className="content-area">
+        {auth.user && auth.error && <div className="alert alert-error" role="alert">Could not sign you out. Please try again.</div>}
         <Outlet />
       </main>
     </div>
-  );
+    {auth.user && <CommandPalette />}
+  </div>;
 }
 
-function AccountControls({ auth }: { auth: ReturnType<typeof useAuth> }) {
-  if (auth.user === null) return null;
-  return <div className="flex items-center justify-between gap-2"><span className="truncate text-xs font-medium text-[var(--strata-text)]">{auth.user.name}</span><button className="text-xs font-semibold text-[var(--strata-accent)] disabled:opacity-60" disabled={auth.logoutPending} onClick={() => { void auth.logout(); }} type="button">{auth.logoutPending ? "Signing out…" : "Sign out"}</button></div>;
-}
-
-function Wordmark() {
-  return <Link className="text-sm font-bold tracking-[0.16em] text-[var(--strata-text)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--strata-accent)]" to="/">STRATA</Link>;
-}
+function Wordmark() { return <Link className="wordmark" to="/"><span className="wordmark-mark" aria-hidden="true"><i /><i /><i /></span><span>STRATA</span></Link>; }
 
 function WorkspaceSelector() {
   const product = useOptionalProduct();
-  if (product === null) return null;
-  const { workspaces, projects, members, currentUser, selectedWorkspaceId, selectedProjectId, selectWorkspace, selectProject, refreshWorkspace, status } = product;
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
-  const [memberId, setMemberId] = useState("");
+  const [memberEmail, setMemberEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const selectorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!open) return; const close = (event: PointerEvent) => { if (!selectorRef.current?.contains(event.target as Node)) setOpen(false); }; const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); }; document.addEventListener("pointerdown", close); document.addEventListener("keydown", escape); return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); }; }, [open]);
+  if (product === null) return <div className="workspace-switcher workspace-switcher-static"><span className="workspace-icon">DB</span><span><strong>Strata Engine</strong><small>Developer workspace</small></span></div>;
+  const { workspaces, members, currentUser, selectedWorkspaceId, selectWorkspace, refreshWorkspace, status } = product;
   const selected = workspaces.find((workspace) => workspace.id === selectedWorkspaceId);
   const owner = members.some((member) => member.user_id === currentUser.id && member.role === "OWNER");
-  const mutate = async (action: () => Promise<unknown>, success: string) => { try { await action(); await refreshWorkspace(); setMessage(success); } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Could not update workspace membership."); } };
-  const add = () => { const userId = Number(memberId); if (!Number.isInteger(userId) || userId < 1 || selectedWorkspaceId === null) { setMessage("Enter a valid user ID."); return; } void mutate(() => addWorkspaceMember(selectedWorkspaceId, userId), "Member added."); };
-  const create = () => { const value = name.trim(); if (!value) { setMessage("Enter a workspace name."); return; } void (async () => { try { const workspace = await createWorkspace(value); await refreshWorkspace(); selectWorkspace(workspace.id); setName(""); setMessage("Collaborative workspace created."); } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Could not create workspace."); } })(); };
-  return (
-    <div className="px-6 pb-2">
-      <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]" htmlFor="workspace-selector">Workspace</label>
-      <select className="mt-1 w-full rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)] px-2 py-1.5 text-xs text-[var(--strata-text)] disabled:opacity-60" disabled={status === "loading" || workspaces.length === 0} id="workspace-selector" onChange={(event) => selectWorkspace(Number(event.target.value))} value={selectedWorkspaceId ?? ""}>
-        {workspaces.length === 0 ? <option value="">No workspaces</option> : workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
-      </select>
-      <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]" htmlFor="project-selector">Project</label>
-      <select className="mt-1 w-full rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)] px-2 py-1.5 text-xs text-[var(--strata-text)] disabled:opacity-60" disabled={status === "loading" || projects.length === 0} id="project-selector" onChange={(event) => selectProject(Number(event.target.value))} value={selectedProjectId ?? ""}>
-        {projects.length === 0 ? <option value="">No projects</option> : projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-      </select>
-      <div className="mt-4 border-t border-[var(--strata-border)] pt-3">
-        <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]" htmlFor="new-workspace">New collaborative workspace</label>
-        <div className="mt-1 flex gap-1"><input className="min-w-0 flex-1 rounded-md border border-[var(--strata-border)] px-2 py-1 text-xs" id="new-workspace" onChange={(event) => setName(event.target.value)} value={name} /><button className="rounded-md bg-[var(--strata-accent)] px-2 text-xs font-semibold text-white" onClick={create} type="button">Create</button></div>
-      </div>
-      {selected?.kind === "COLLABORATIVE" && <section aria-label="Workspace members" className="mt-4 border-t border-[var(--strata-border)] pt-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--strata-subtle)]">Members {owner && <span className="text-[var(--strata-accent)]">· Owner</span>}</p><ul className="mt-2 space-y-1">{members.map((member) => <li className="flex items-center justify-between gap-1 text-xs" key={member.user_id}><span className="truncate">{member.name} <span className="text-[var(--strata-subtle)]">({member.role})</span></span>{owner && member.role === "MEMBER" && <span className="flex gap-1"><button className="text-[var(--strata-accent)]" onClick={() => { if (window.confirm(`Transfer ownership to ${member.name}?`)) void mutate(() => transferWorkspaceOwnership(selected.id, member.user_id), "Ownership transferred."); }} type="button">Make owner</button><button className="text-rose-700" onClick={() => { if (window.confirm(`Remove ${member.name}? Their tasks will be unassigned.`)) void mutate(() => removeWorkspaceMember(selected.id, member.user_id), "Member removed and their tasks unassigned."); }} type="button">Remove</button></span>}</li>)}</ul>{owner && <div className="mt-2 flex gap-1"><input aria-label="Member user ID" className="min-w-0 flex-1 rounded-md border border-[var(--strata-border)] px-2 py-1 text-xs" inputMode="numeric" onChange={(event) => setMemberId(event.target.value)} placeholder="User ID" value={memberId} /><button className="rounded-md border border-[var(--strata-border)] px-2 text-xs font-semibold" onClick={add} type="button">Add</button></div>}</section>}
-      {message && <p className="mt-2 text-xs text-[var(--strata-muted)]" role="status">{message}</p>}
-    </div>
-  );
+  const create = async () => { const value = name.trim(); if (!value) { setMessage("Enter a workspace name."); return; } try { const workspace = await createWorkspace(value); await refreshWorkspace({ workspaceId: workspace.id }); setName(""); setCreating(false); setMessage(null); } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Could not create workspace."); } };
+  const add = async () => { const email = memberEmail.trim(); if (!/^\S+@\S+\.\S+$/.test(email) || selectedWorkspaceId === null) { setMessage("Enter a valid member email."); return; } try { await addWorkspaceMember(selectedWorkspaceId, email); await refreshWorkspace(); setMemberEmail(""); setMessage("Member added."); } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Could not add member."); } };
+  return <div className="workspace-control" ref={selectorRef}>
+    <div className="workspace-switcher"><span className="workspace-icon">{selected?.name.slice(0, 2).toUpperCase() ?? "—"}</span><button aria-controls="workspace-options" aria-expanded={open} aria-haspopup="listbox" aria-label={`Workspace: ${selected?.name ?? "none selected"}`} className="workspace-selector-trigger" disabled={status === "loading" || workspaces.length === 0} id="workspace-selector-trigger" onClick={() => setOpen((value) => !value)} onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); setOpen(true); window.setTimeout(() => document.querySelector<HTMLElement>("#workspace-options [role='option']")?.focus(), 0); } }} type="button"><span><strong title={selected?.name}>{selected?.name ?? "No workspaces"}</strong><small>{selected?.kind === "COLLABORATIVE" ? `${members.length} members` : "Personal workspace"}</small></span><i aria-hidden="true">⌄</i></button><select aria-hidden="true" className="workspace-selector-native" disabled={status === "loading" || workspaces.length === 0} id="workspace-selector" onChange={(event) => selectWorkspace(Number(event.target.value))} tabIndex={-1} value={selectedWorkspaceId ?? ""}>{workspaces.length === 0 ? <option value="">No workspaces</option> : workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select><button aria-label="Create workspace" className="workspace-add" onClick={() => { setOpen(false); setCreating((value) => !value); }} type="button">+</button></div>
+    {open && <div className="workspace-options" id="workspace-options" onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return; event.preventDefault(); const options = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[role='option']")); const index = options.indexOf(document.activeElement as HTMLElement); options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus(); }} role="listbox">{workspaces.map((workspace) => <button aria-selected={workspace.id === selectedWorkspaceId} key={workspace.id} onClick={() => { selectWorkspace(workspace.id); setOpen(false); }} role="option" title={workspace.name} type="button"><span className="workspace-option-icon">{workspace.name.slice(0, 2).toUpperCase()}</span><span><strong>{workspace.name}</strong><small>{workspace.kind === "COLLABORATIVE" ? "Collaborative workspace" : "Personal workspace"}</small></span>{workspace.id === selectedWorkspaceId && <i aria-hidden="true">✓</i>}</button>)}</div>}
+    {creating && <div className="workspace-create"><label htmlFor="new-workspace">New collaborative workspace</label><div><input className="input" id="new-workspace" onChange={(event) => setName(event.target.value)} placeholder="Workspace name" value={name} /><button className="button button-primary" onClick={() => void create()} type="button">Create</button></div></div>}
+    {selected?.kind === "COLLABORATIVE" && owner && <div className="sidebar-quick-add"><input aria-label="Member email" onChange={(event) => setMemberEmail(event.target.value)} placeholder="Add by email" type="email" value={memberEmail} /><button onClick={() => void add()} type="button">Add</button></div>}
+    {message && <p className="workspace-message" role="status">{message}</p>}
+  </div>;
 }
 
-function NavigationLink({ item }: { item: { to: string; label: string; icon: NavIconName } }) {
-  return (
-    <NavLink
-      className={({ isActive }) => [
-        "flex h-9 items-center gap-3 rounded-md px-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--strata-accent)]",
-        isActive ? "bg-[var(--strata-accent-soft)] font-semibold text-[var(--strata-accent)]" : "font-medium text-[var(--strata-muted)] hover:bg-[var(--strata-hover)] hover:text-[var(--strata-text)]",
-      ].join(" ")}
-      end={item.to === "/"}
-      to={item.to}
-    >
-      <NavIcon className="size-4 shrink-0" name={item.icon} />
-      <span>{item.label}</span>
-    </NavLink>
-  );
-}
-
-function HealthStatus({ connection }: { connection: ConnectionState }) {
-  return (
-    <span aria-live="polite" className="flex items-center gap-2 text-xs font-medium text-[var(--strata-muted)]">
-      <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[connection]}`} />
-      {healthCopy[connection]}
-    </span>
-  );
-}
+function NavigationLink({ item, unreadCount = 0 }: { item: { to: string; label: string; icon: NavIconName }; unreadCount?: number }) { return <NavLink className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`} end={item.to === "/"} to={item.to}><NavIcon name={item.icon} /><span>{item.label}</span>{unreadCount > 0 && <span aria-label={`${unreadCount} unread notifications`} className="nav-count">{unreadCount > 99 ? "99+" : unreadCount}</span>}</NavLink>; }
+function ThemeButton() { const { resolvedTheme, setPreference } = useTheme(); return <button aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} theme`} className="icon-button" onClick={() => setPreference(resolvedTheme === "dark" ? "light" : "dark")} title="Toggle theme" type="button">{resolvedTheme === "dark" ? "☀" : "☾"}</button>; }
+function HealthStatus({ connection, compact = false }: { connection: ConnectionState; compact?: boolean }) { return <span aria-live="polite" className={`health-status ${compact ? "health-compact" : ""}`}><i className={`health-dot health-${connection}`} />{connection === "checking" ? "Checking backend…" : connection === "connected" ? "Backend: Connected" : "Backend: Unavailable"}</span>; }

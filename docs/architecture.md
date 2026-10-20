@@ -1,181 +1,91 @@
-# Strata Architecture — Phase 0
+# Strata architecture
 
-> **Historical implementation snapshot.** This document records early phase design and may describe planned or excluded work that changed in later phases. For the current DBthon implementation status and supported capabilities, see [README.md](../README.md) and the current source/tests.
+## Product scope boundaries
 
-## 1. System Overview
+Authenticated product reads are split into account-wide and selected-workspace scopes. `GET /api/dashboard`, `GET /api/tasks`, and Inbox are global but membership-filtered on every request. `GET /api/workspaces/{id}/dashboard`, `GET /api/my/tasks?workspace_id=...`, Projects, Tasks, Board, and Members require current membership in the selected workspace. Frontend workspace state is a navigation preference, never an authorization boundary.
 
-**Strata** is an educational relational database management system and collaborative task-management application developed for **CSE302L / BCSE302P (Database Systems & Database Systems Lab)**.
+Task audit history is append-only. Logical task IDs are allocated above both live tasks and retained audit identities so deletion cannot cause cross-generation identity reuse. See [manual-review-fixes.md](manual-review-fixes.md) for the legacy compatibility rule.
 
-The long-term objective of Strata is to demonstrate fundamental database engine concepts by building a relational database engine from scratch in Python, while driving realistic workloads through a task-management backend.
+## Runtime boundaries
 
-In **Phase 0 (Repository Foundation)**, no database engine internals (storage files, buffer manager, catalog, SQL execution, B+ trees, transactions) are implemented. Instead, Phase 0 establishes the software boundaries, package layouts, and an in-process adapter demonstrating verifiable backend-to-engine connectivity.
+The browser talks only to FastAPI. The backend owns two independent StrataEngine lifecycles: the product database and the SQL demonstration database. They must use different directories. Product routes call ProductService and the typed Table API; SQL routes call EngineAdapter and the parser/binder/planner/executor path. Neither path uses an external DBMS.
 
----
+FastAPI synchronous request handlers run on worker threads. A lifespan creates each engine, bootstraps its schema and persistent indexes, and installs the product service. Shutdown closes engines after request handling stops. The supported deployment is one backend process/worker, multiple concurrent requests, and local disk.
 
-## 2. Architectural Boundaries: Backend vs. Engine
+## Product data model
 
-Strata strictly isolates application logic from database engine internals across two distinct packages:
+| Table | Purpose and relationships |
+| --- | --- |
+| users | Logical ID, display name, canonical email, nullable Argon2id hash, account state, timestamps |
+| workspaces | ID, name, PERSONAL/COLLABORATIVE kind, timestamps |
+| workspace_members | Workspace ID, user ID, OWNER/MEMBER role; exactly one owner per workspace |
+| projects | Workspace ID, name, description, immutable creator attribution, timestamps |
+| tasks | Project ID, title/description, status/priority, nullable assignee, creator, timestamps |
+| notes | Task ID, author ID, content, timestamps |
+| sessions | User ID, SHA-256 digest of opaque token, creation and expiry timestamps |
+| task_due_dates | Additive optional ISO calendar date keyed by task ID |
+| task_activity | Append-only logical task events with retained project/workspace/actor identity |
+| notifications | Persistent recipient-owned collaboration inbox and read/dismissal state |
 
-```
-+-------------------------------------------------------------+
-|                      strata_backend                         |
-|                                                             |
-|   FastAPI App (Endpoints) ---> EngineAdapter                |
-+--------------------------------------|----------------------+
-                                       | In-process Python API
-                                       v
-+-------------------------------------------------------------+
-|                      strata_engine                          |
-|                                                             |
-|   StrataEngine                                              |
-|     |-- (Phase 0: Lifecycle initialization & status)        |
-|     +-- (Future: Storage, Catalog, Planner, Execution)      |
-+-------------------------------------------------------------+
-```
+Logical IDs are allocated under the shared database lock. They use the existing MAX + 1 strategy; deletion of the highest ID can permit reuse, so IDs are not globally monotonic. References and application uniqueness are service invariants, not native SQL constraints. Indexed lookup covers email, memberships by user/workspace, projects by workspace, tasks by project/assignee, notes by task, and sessions by token digest/user.
 
-### strata_backend
-The backend package (`src/strata_backend`) is responsible for serving REST endpoints, managing HTTP requests/responses, serializing data, and in future phases, handling domain logic such as projects, tasks, user authentication, and workspace isolation. The backend never manipulates physical database files directly and never embeds raw storage algorithms.
+Due dates, activity history, cross-workspace assigned-task queries, handoff notes, and notifications are documented in [scope-c-backend.md](scope-c-backend.md). The sidecar design preserves legacy task tuple fingerprints and extends existing databases repeatably without rewriting user rows.
 
-### strata_engine
-The engine package (`src/strata_engine`) houses the relational database engine. Its responsibility is pure database management: disk page layout, buffer pooling, catalog management, SQL parsing, query optimization, indexing, and transactional ACID guarantees.
+Registration provisions a personal workspace and initial project. A registered user can create a collaborative workspace and add another active registered user by normalized email. Membership is immediate. Only an owner can add/remove members, transfer ownership, or edit/delete a collaborative workspace. Personal workspaces cannot be renamed/deleted through the authenticated API and cannot gain members.
 
-### The Role of the Engine Adapter
-The `EngineAdapter` (`strata_backend/engine_adapter.py`) acts as the mediator between the FastAPI HTTP routes and the `StrataEngine` instance:
-- It shields backend route handlers from internal changes in the engine's public API.
-- It translates backend intent into engine calls.
-- In Phase 0, it calls `StrataEngine.status()` and passes formatted status information to the `GET /health` endpoint.
-- In future phases, it will manage connection contexts, query dispatch, and result mapping.
+Members can create/edit projects and tasks and assign workspace members. Project/task deletion belongs to their creator; an owner can delete when that creator no longer has active membership. Note changes belong to the author, who must still have access. Removing a member clears assignments but preserves creator/note author IDs. Ownership transfer demotes/promotes the two membership rows while holding the database lock.
 
----
+## Authentication and authorization
 
-## 3. Communication Flow & In-Process Invocation
+Passwords use Argon2id. Expensive hashing/verification happens outside the database critical section. Login rechecks the user is active before creating a session. The raw random token goes into an HttpOnly, SameSite=Lax cookie; only its digest is stored. Sessions last 30 days and are checked against server time. Logout resolves and revokes the presented token under one database lock, so a concurrent login cannot have a reused numeric session ID revoked by an older logout. STRATA_SESSION_COOKIE_SECURE=true is available for HTTPS deployments; local HTTP uses false.
 
-### Phase 0 Health Check Flow
+Every product resource route derives its actor from the session dependency. Unauthorized resource reads use 404; visible resources with forbidden operations use 403. Membership-by-email checks workspace authorization before looking up the email. Request models reject unexpected fields, preventing client-supplied owner/author identities. The browser uses the Vite same-origin API proxy. CORS is not configured for credentialed requests from arbitrary other origins. Unsafe /api requests also check Origin against the incoming same-origin host or the configured frontend origin; Referer and Fetch Metadata provide fallback checks. This blocks same-site alternate-port logout CSRF. Headerless non-browser clients remain supported. Request validation rejects malformed Unicode and coerced body IDs; validation responses omit submitted values.
 
-```
-[ HTTP Client ]
-      |
-      |  GET /health
-      v
-[ FastAPI Route Handler (main.py) ]
-      |
-      |  get_status()
-      v
-[ EngineAdapter (engine_adapter.py) ]
-      |
-      |  status()
-      v
-[ StrataEngine (engine.py) ]
-      |
-      |  Returns deterministic status dict
-      v
-[ FastAPI Response: HTTP 200 JSON ]
-```
+ProductService's actor_user_id=None mode is retained for trusted internal/bootstrap use. It is not an HTTP permission bypass: resource routes always supply the authenticated actor. Raw engine access likewise has no product authorization layer.
 
-### Why In-Process?
-The backend initially invokes the database engine **in-process** via standard Python method calls:
-- Eliminates unnecessary network protocol and IPC overhead during development.
-- Keeps testing deterministic and self-contained without requiring external database servers (PostgreSQL, MySQL) or external daemon processes.
-- Allows fine-grained inspection and unit testing of database algorithms (page management, locking, buffer replacement) directly within Python.
+## Database concurrency and deadlock prevention
 
-### Client / Frontend Isolation
-When the frontend is created in later phases, it will **never** access database files or invoke engine methods directly. All client access is strictly routed through the FastAPI backend over REST/HTTP. This preserves security, centralized schema validation, authentication, and isolation guarantees.
+The implementation is in src/strata_engine/concurrency.py.
 
----
+1. StrataEngine constructs one DatabaseLock (an RLock with a 30-second acquisition deadline).
+2. Catalog, Table and catalog-owned BPlusTree instances receive that same object. ProductService instances and EngineAdapter reuse it rather than creating independent locks.
+3. A service operation holds it across reads, permission checks, MAX + 1 allocation, heap writes and index maintenance. Password hashing is outside this section.
+4. Engine SQL operations hold it through parse/bind/plan/execute and row materialization. Catalog DDL, Table insert/get/update/delete/count/scan/close and B+ tree operations also acquire it directly.
+5. Nested calls reenter the same lock. There are no independently acquired table, page, heap or buffer locks on these paths. Thus workers cannot form an A-table/B-table acquisition cycle.
+6. Context managers release the lock on success or exception. A timeout raises DatabaseBusyError; product and SQL HTTP routes return 503. It is not a detected deadlock or a rollback operation.
 
-## 4. Centralized Relational Design vs. Distributed Systems
+This is **deadlock prevention by coarse serialization**. It trades parallel reads/writes for a small, auditable correctness boundary. It is not serializable transactions, 2PL, MVCC, deadlock detection or automatic compensation of arbitrary statements.
 
-- **Centralized Single-Node Architecture**: Strata is explicitly designed as a centralized relational database engine. All storage, memory management, indexing, and query processing occur on a single host.
-- **Out of Scope**: Distributed database concepts—such as distributed consensus (Raft/Paxos), partition management, two-phase commit (2PC) over network nodes, distributed transactions, and data sharding—are strictly out of scope for Strata.
+Table.scan materializes records under the lock before returning an iterator. Holding or abandoning that iterator cannot retain the database lock or pin a page. TableScan still reports a closed-table error if its table is closed mid-lifecycle. Snapshots cost memory proportional to the table. Direct scans are snapshots; the complete SQL operator lifecycle is protected by the outer engine lock.
 
----
+HeapFile, BufferPoolManager, CLOCK, PageFile, Page and SlottedPage remain low-level primitives without independent synchronization. Their buffer maps, frame pin counts/dirty flags, file offsets, page allocation and byte mutations are protected when reached through the coordinated Table/SQL/service paths. For manual compound access or custom execution operators, use:
 
-## 5. Application Data vs. Engine-Internal State
+~~~python
+with engine.operation():
+    table = engine.get_table("tasks")
+    # Perform the complete compound operation here.
+~~~
 
-A clean conceptual separation is maintained between:
-1. **Engine-Internal State**:
-   - Page headers, slotted page records, page directories.
-   - Buffer pool frame tables and replacement policies (LRU/Clock).
-   - System catalog tables storing table schemas, column types, and indexes.
-   - Lock tables, wait-for graphs for deadlock detection, transaction undo/redo logs.
-2. **Application Data**:
-   - User credentials, workspaces, roles, projects, tasks, notes, and activity history.
-   - Application data resides purely within tables managed by the engine, queried via SQL commands issued by the backend adapter.
+Never mutate raw pages or attach independently locked trees to a shared database outside this context. Standalone raw-storage primitives support single-threaded use. Do not acquire a second database lock, await, join a database worker, or run a callback that does so while holding the first. These external lock/wait patterns are outside the supported model; application paths do not use them.
 
----
+### Directory ownership
 
-## 6. Implementation Status and Component Roadmap
+Catalog opens a permanent .strata.lock file and obtains a nonblocking OS advisory lock (msvcrt byte lock on Windows; flock on POSIX). A second catalog or engine on the same resolved directory fails with DatabaseInUseError before opening storage. The handle is retained until normal close and released on initialization failure. The OS releases it if the process exits; never delete the lock file to force access.
 
-| Component | Status | Description |
-|---|---|---|
-| Repository Layout & Packaging | **Implemented (Phase 0)** | Standard src-based layout, pyproject.toml, pytest suite |
-| `StrataEngine` Core Class | **Implemented (Phase 0)** | Lifecycle initialization, status reporting, execute() placeholder |
-| `EngineAdapter` | **Implemented (Phase 0)** | In-process boundary between backend and engine |
-| `GET /health` Endpoint | **Implemented (Phase 0)** | Validated HTTP 200 endpoint returning engine status JSON |
-| Fixed-Size Pages & Page File Storage | **Implemented (Phase 1)** | Fixed-size 4096-byte pages, PageId, PageFile manager |
-| Slotted Page Record Storage | **Implemented (Phase 2)** | Slotted page headers, slot directories, compaction, RecordId |
-| Buffer Pool Manager | **Implemented (Phase 3)** | In-memory frame pool, ClockReplacer, pin/unpin tracking, dirty writeback |
-| Heap File Storage | **Implemented (Phase 4)** | Multi-page record collection, first-fit allocation, RecordId routing, leak-proof scan |
-| System Catalog & Schema | **Implemented (Phase 5)** | Persistent metadata, schemas, typed Tuples, binary serialization, Table abstraction |
-| SQL Lexer & Parser | *Planned (Phase 6)* | Tokenization and AST generation for subset of SQL |
-| Query Execution Engine | *Planned (Phase 7)* | Volcano-style iterator model (Scan, Filter, Project, Join) |
-| B+ Tree Indexing | *Planned (Phase 8)* | Page-backed tree indexing for efficient point & range lookups |
-| Transactions & Concurrency | *Planned (Phase 9)* | Strict 2PL, shared/exclusive locks, WAL, deadlock detection |
-| Query Optimizer & EXPLAIN | *Planned* | Cost-based / heuristic query planning and plan visualization |
-| Workspace & Task Backend | *Planned* | Domain entities, auth, task management logic |
-| Web Frontend | *Planned* | User interface for projects and tasks |
+This prevents accidental multi-worker deployment and duplicate caches. It does not enable multi-process reads/writes, protect against programs that ignore the guard, or recover partially written data. Network/shared filesystem locking is not supported. The cross-process rejection test was executed on Windows; the POSIX branch is provided but was not exercised in this sprint.
 
----
+### Evidence
 
-## 7. Phase 5 Architecture: System Catalog, Schema, and Table Metadata
+Tests in tests/test_concurrency.py use events, barriers, bounded joins and exception propagation. They hold the shared lock and observe competing acquisition attempts through services (including a second instance), SQL, profiled SQL, adapter, catalog, table scan/read, indexes and close. An opposite-table-order experiment makes a second worker contend while the first owns the lock; both finish, indexed rows match and survive reopen. Additional cases cover concurrent patches/ID allocation, duplicate additions, ownership transfer, removal-versus-assignment, exception release, abandoned scans, timeout behavior and directory ownership.
 
-Phase 5 bridges low-level opaque page storage and high-level relational operations by introducing structured typing, binary serialization, table abstractions, and a persistent system catalog.
+## Persistence and failures
 
-### Layered Architecture
+Dirty heap buffers flush on eviction/normal close; indexes persist nodes and header metadata. Catalog metadata and indexes reopen from their own files. Updates preserve the RID where possible and relocate otherwise. Table updates maintain index entries and attempt row-local compensation on failure. Registration/workspace creation compensate inserted rows; membership transfer/removal attempt to restore roles/assignments. Ownership rollback retains the actual RID returned by a potentially relocating demotion. Failed task/workspace deletion restores completed child deletes, and reports an explicit service error if restoration fails. B+ tree mutations retain touched-node before-images and structural counters to recover from transient split/node-write failures.
 
-```text
-StrataEngine (engine.py)
-   │
-   ▼
-Catalog (catalog/catalog.py)
-   │ [Persistent metadata, tables.db, columns.db, HWM allocation]
-   ▼
-Table (catalog/table.py)
-   │ [Typed insert, get, delete, scan, count over HeapFile]
-   ▼
-TupleSerializer (schema/serializer.py) + Schema (schema/schema.py)
-   │ [Strict typing, big-endian binary packing, CRC32 fingerprinting, null bitmap]
-   ▼
-Tuple (schema/tuple.py)
-   │ [Immutable typed row container]
-   ▼
-HeapFile (storage/heap_file.py)
-   │ [Opaque variable-length byte record collection]
-   ▼
-BufferPoolManager (storage/buffer_pool.py)
-   │ [Fixed-capacity page cache & CLOCK eviction]
-   ▼
-SlottedPage (storage/slotted_page.py)
-   │ [Fixed 4096-byte slotted page layout]
-   ▼
-PageFile (storage/page_file.py)
-   │ [Direct 4096-byte block I/O]
-   ▼
-Disk
-```
+These compensations are not transactions. SQL multi-row mutations may leave earlier writes applied after an I/O failure. Persistent I/O faults or a failed inverse can also leave partial changes despite the focused compensations. There is no WAL, fsync-based durability contract, arbitrary-crash recovery or automatic repair. Normal close/reopen, API restart and indexed mutation persistence are verified; sudden process termination is not a recovery guarantee.
 
-### Key Phase 5 Invariants
+## SQL and storage foundations
 
-1. **Strict Relational Types**: `DataType` supports exactly `INTEGER` (signed 32-bit), `BIGINT` (signed 64-bit), `FLOAT` (IEEE-754 binary64), `BOOLEAN` (strict bool), and `VARCHAR` (Unicode code-point limit $1 \le N \le 4080$).
-2. **Deterministic Schema Fingerprint**: 32-bit unsigned CRC32 computed over canonical ASCII specification strings. Detects schema mismatches instantly.
-3. **Binary Record Layout**:
-   - 2B `column_count` + 4B `schema_fingerprint` + $\lceil \text{cols}/8 \rceil$B `null_bitmap` + ordinal payload.
-   - Fits strictly within `MAX_RECORD_SIZE = 4084` bytes.
-4. **Physical Directory Layout**:
-   - `<data_dir>/catalog/tables.db` and `<data_dir>/catalog/columns.db`.
-   - `<data_dir>/tables/table_{table_id}.db` where `table_id >= 1`.
-5. **Persistent Monotonic High-Water Mark (HWM)**:
-   - Header record `table_id = 0` in `tables.db` stores `STRATA_CATALOG_V1:HWM=<id>`.
-   - Table IDs are strictly monotonic and never reused, even after table deletion.
-   - Startup reconciles persisted HWM with orphan physical files to prevent ID collisions.
-6. **Strict Error Model**: Separated hierarchies for `StorageError`, `SchemaError`, `SerializationError`, and `CatalogError`. Schema code has zero imports from storage.
+4096-byte pages contain slotted records. Typed tuples and schema fingerprints sit above HeapFile; persistent catalog metadata maps logical names to table/index files. B+ trees handle supported typed keys and RIDs. The SQL frontend uses a lexer, recursive-descent parser and binder. The deterministic planner selects table/index scans, unary filters/projections/sorts/limits, aggregates and a constrained nested-loop join. Volcano operators execute through open/next/close. Profiles count logical traversal work.
+
+These are established database concepts implemented for this project. Their value is demonstrated by persisted multi-user workflows and inspectable storage/query behavior. No novelty, full SQL compatibility or ACID claims are made.

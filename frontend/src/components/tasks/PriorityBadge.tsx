@@ -2,11 +2,11 @@ import type { TaskPriority } from "../../types/product";
 import { formatTaskPriority } from "./taskPresentation";
 
 const styles: Record<TaskPriority, string> = {
-  LOW: "text-[var(--strata-muted)]",
-  MEDIUM: "text-slate-700",
-  HIGH: "text-amber-800",
+  LOW: "priority-low",
+  MEDIUM: "priority-medium",
+  HIGH: "priority-high",
 };
 
 export function PriorityBadge({ priority }: { priority: TaskPriority }) {
-  return <span className={`text-xs font-semibold ${styles[priority]}`}>{formatTaskPriority(priority)}</span>;
+  return <span className={`priority-badge ${styles[priority]}`}><i aria-hidden="true" />{formatTaskPriority(priority)}</span>;
 }

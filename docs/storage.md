@@ -10,7 +10,7 @@ This document describes the design, architecture, binary layout, and usage of St
 ## 1. Concepts and Fundamentals
 
 ### What is a Page?
-A **Page** is the fundamental atomic unit of disk I/O in Strata. It is a fixed-size contiguous block of bytes (default 4096 bytes) in memory that maps directly to an identical block on disk.
+A **Page** is the fundamental unit of disk I/O in Strata. It is a fixed-size contiguous block of bytes (default 4096 bytes) in memory that maps directly to an identical block on disk.
 
 ### What is a Slotted Page?
 While a raw `Page` is an unstructured sequence of bytes, a **SlottedPage** organizes that fixed-size page to support storing multiple **variable-length opaque byte records**.
@@ -396,8 +396,9 @@ or internal pages.
 - Supported key domains: `INTEGER`, `BIGINT`, `BOOLEAN`, and `VARCHAR`.
 - A leaf stores sorted `(key, RecordId)` entries and a next-leaf PageId.
 - Internal separators use the complete `(key, RecordId)` ordering and identify
-  the first entry in their right child, which keeps duplicate keys correct
-  across leaf boundaries.
+  a lower bound of their right child, strictly above the left child maximum.
+  Retaining valid bounds during deletion avoids VARCHAR separator growth and
+  keeps duplicate keys correct across leaf boundaries.
 - Exact duplicate pairs are set-like no-ops; duplicate keys with different
   RecordIds are retained.
 - `search(key)` returns RecordIds in deterministic RecordId order;
@@ -405,6 +406,38 @@ or internal pages.
 - Header metadata persists the root, height, entry count, leaf count, and tree
   page count. Lookup/range operations expose deterministic page/entry metrics.
 
-Phase 19 deliberately excludes Catalog metadata, SQL `CREATE INDEX`, automatic
-Table maintenance, `IndexScan`, FLOAT and NULL keys, deletion/rebalancing, and
-transactions or recovery.
+The current relational integration adds catalog index metadata, automatic Table
+maintenance, IndexScan, and deletion. Full delete rebalancing/page reclamation,
+SQL CREATE INDEX, FLOAT/NULL keys, transactions and crash recovery remain unsupported.
+
+
+## 13. Concurrency and normal shutdown
+
+Engine, catalog, tables, indexes and ProductService instances share one reentrant
+DatabaseLock. Complete SQL executions and service operations serialize heap
+changes, index maintenance, buffer pin/unpin bookkeeping, CLOCK replacement and
+page-file offsets. Table scans materialize snapshots while holding the lock and
+return iterators without retained locks or pins.
+
+Raw HeapFile, BufferPoolManager, PageFile and mutable Page/SlottedPage APIs do not
+lock themselves. They are single-threaded primitives unless the caller holds
+engine.operation() around the complete operation. Custom operators, combined
+index-search/table-fetch sequences and raw page manipulation need that same
+context. Do not wait for a worker or acquire a different engine lock inside it.
+
+Catalog holds an OS lock on .strata.lock until close. A second catalog/process
+is rejected before opening storage; multi-process writers and network filesystems
+are unsupported. Leave the lock file in place. Normal shutdown flushes buffers
+and index metadata; this is not a promise of atomic page writes, WAL recovery,
+fsync durability or recovery after arbitrary termination. See architecture.md
+for the supported scope and development.md for deterministic experiments.
+
+## 14. Adversarial hardening evidence
+
+The final audit adds deterministic variable-width deletion, mixed insert/update/delete,
+three-leaf splits for large legal keys, duplicate/null keys, pool-size-one eviction,
+index-versus-heap comparison and repeated normal reopen tests. B+ tree insert/delete
+now retain before-images of touched nodes and structural counters for compensation
+of a recoverable exception. Newly allocated detached pages remain counted; they
+are not reclaimed. This is local operation compensation, not a transaction manager,
+WAL or crash recovery. Recovery writes must succeed. See adversarial-hardening.md.

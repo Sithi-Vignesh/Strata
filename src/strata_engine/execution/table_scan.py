@@ -102,6 +102,8 @@ class TableScan(Operator):
             return None
 
         try:
+            if self._table.is_closed:
+                raise StorageClosedError(f"Cannot read closed Table '{self._table.name}'.")
             assert self._iter is not None
             _rid, tuple_obj = next(self._iter)
             self._tuples_examined += 1

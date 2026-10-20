@@ -8,9 +8,12 @@ keys remain correct even when they span multiple leaves.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import struct
+from strata_engine.concurrency import DatabaseLock, synchronized
+
 from typing import Any, Optional, Union
 
 from strata_engine.schema.data_type import DataType
@@ -82,8 +85,10 @@ class BPlusTree:
     """A persistent B+ tree for one supported :class:`DataType`.
 
     Empty trees have an allocated empty leaf root and height one.  Internal
-    separator entries are the first composite entry of their right child:
-    every entry in that child is greater than or equal to the separator.
+    separator entries are composite lower bounds of their right child:
+    every entry in that child is greater than or equal to the separator,
+    and every entry in the left child is strictly smaller. Deletion retains
+    these bounds instead of growing variable-length separators.
     Exact duplicate ``(key, RecordId)`` insertions are no-ops and return
     ``False``; all other inserts return ``True``.
     """
@@ -91,16 +96,18 @@ class BPlusTree:
     __slots__ = (
         "_path", "_page_file", "_buffer_pool", "_key_type", "_root_page_id",
         "_height", "_entry_count", "_leaf_page_count", "_tree_page_count",
-        "_closed", "_header_dirty", "_last_operation_stats",
+        "_closed", "_header_dirty", "_last_operation_stats", "_lock", "_mutation_pages",
     )
 
-    def __init__(self, path: Union[Path, str], key_type: Optional[DataType], pool_size: int, create: bool) -> None:
+    def __init__(self, path: Union[Path, str], key_type: Optional[DataType], pool_size: int, create: bool, operation_lock: DatabaseLock | None = None) -> None:
         if type(pool_size) is not int or pool_size < 1:
             raise ValueError("pool_size must be an integer of at least 1.")
+        self._lock = operation_lock if operation_lock is not None else DatabaseLock()
         self._path = Path(path).resolve()
         self._closed = False
         self._header_dirty = False
         self._last_operation_stats = TraversalStats()
+        self._mutation_pages: Optional[dict[int, bytes]] = None
         self._page_file = PageFile(self._path)
         self._buffer_pool = BufferPoolManager(self._page_file, pool_size=pool_size)
         try:
@@ -130,14 +137,14 @@ class BPlusTree:
             raise
 
     @classmethod
-    def create(cls, path: Union[Path, str], key_type: DataType, pool_size: int = 10) -> "BPlusTree":
+    def create(cls, path: Union[Path, str], key_type: DataType, pool_size: int = 10, *, operation_lock: DatabaseLock | None = None) -> "BPlusTree":
         """Create a new tree at an empty explicit path."""
-        return cls(path, key_type, pool_size, create=True)
+        return cls(path, key_type, pool_size, create=True, operation_lock=operation_lock)
 
     @classmethod
-    def open(cls, path: Union[Path, str], key_type: Optional[DataType] = None, pool_size: int = 10) -> "BPlusTree":
+    def open(cls, path: Union[Path, str], key_type: Optional[DataType] = None, pool_size: int = 10, *, operation_lock: DatabaseLock | None = None) -> "BPlusTree":
         """Open an existing tree, optionally requiring its persisted key type."""
-        return cls(path, key_type, pool_size, create=False)
+        return cls(path, key_type, pool_size, create=False, operation_lock=operation_lock)
 
     @property
     def path(self) -> Path:
@@ -357,10 +364,47 @@ class BPlusTree:
         finally:
             self._buffer_pool.unpin_page(PageId(pid), is_dirty=False)
 
+    @contextmanager
+    def _mutation(self):
+        """Compensate one failed tree operation while its database lock is held.
+
+        Before-images cover existing node pages only. Newly allocated pages
+        remain detached, like pages retained by deletion. This handles a
+        recoverable exception, not process crashes or persistent I/O failure.
+        """
+        before = (self._root_page_id, self._height, self._entry_count,
+                  self._leaf_page_count, self._tree_page_count, self._header_dirty)
+        self._mutation_pages = {}
+        try:
+            yield
+        except Exception as exc:
+            pages = self._mutation_pages
+            self._mutation_pages = None
+            (self._root_page_id, self._height, self._entry_count,
+             self._leaf_page_count, old_pages, old_dirty) = before
+            self._tree_page_count = self._page_file.page_count
+            self._header_dirty = old_dirty or self._tree_page_count != old_pages
+            try:
+                for pid, raw in pages.items():
+                    page = self._buffer_pool.fetch_page(PageId(pid))
+                    dirty = False
+                    try:
+                        page.write_bytes(raw)
+                        dirty = True
+                    finally:
+                        self._buffer_pool.unpin_page(PageId(pid), is_dirty=dirty)
+            except Exception as rollback_error:
+                raise exc from rollback_error
+            raise
+        finally:
+            self._mutation_pages = None
+
     def _write_node(self, pid: int, node: _Node) -> None:
         page = self._buffer_pool.fetch_page(PageId(pid))
         dirty = False
         try:
+            if self._mutation_pages is not None and pid not in self._mutation_pages:
+                self._mutation_pages[pid] = page.to_bytes()
             page.write_bytes(self._node_bytes(node))
             dirty = True
         finally:
@@ -447,7 +491,7 @@ class BPlusTree:
     def _fits(self, node: _Node) -> bool:
         return self._node_size(node) <= PAGE_SIZE
 
-    def _split_leaf(self, node: _Node) -> tuple[_Node, _Node]:
+    def _split_leaf(self, node: _Node) -> list[_Node]:
         sizes = [self._leaf_entry_size(entry) for entry in node.entries]
         payload_size = sum(sizes)
         left_size = 0
@@ -461,9 +505,23 @@ class BPlusTree:
                 balance = abs(left_size - right_size)
                 if best is None or balance < best[0]:
                     best = (balance, left, right)
-        if best is None:
-            raise KeyTooLargeError("B+ tree leaf cannot be split into two valid pages.")
-        return best[1], best[2]
+        if best is not None:
+            return [best[1], best[2]]
+        # A large inserted key between two smaller groups can need three
+        # pages even though every individual key fits. Pack in key order;
+        # never reject a supported key merely because two pages cannot fit it.
+        groups: list[_Node] = []
+        entries: list[_LeafEntry] = []
+        size = NODE_HEADER_SIZE
+        for entry, entry_size in zip(node.entries, sizes):
+            if entries and size + entry_size > PAGE_SIZE:
+                groups.append(_Node(LEAF, entries, NO_PAGE))
+                entries = []
+                size = NODE_HEADER_SIZE
+            entries.append(entry)
+            size += entry_size
+        groups.append(_Node(LEAF, entries, node.link))
+        return groups
 
     def _split_internal(self, node: _Node) -> tuple[_Node, _LeafEntry, _Node]:
         assert node.children is not None
@@ -484,11 +542,16 @@ class BPlusTree:
             raise KeyTooLargeError("B+ tree internal node cannot be split into two valid pages.")
         return best[1], best[2], best[3]
 
+    @synchronized
     def insert(self, key: object, record_id: RecordId) -> bool:
         """Insert one ``(key, RecordId)`` pair; return False for an exact duplicate."""
         self._check_open()
         self._validate_key(key)
         self._validate_record_id(record_id)
+        with self._mutation():
+            return self._insert(key, record_id)
+
+    def _insert(self, key: object, record_id: RecordId) -> bool:
         pair = (key, int(record_id.page_id), record_id.slot_id)
         leaf_pid, leaf, path = self._find_leaf(pair)
         position = self._insert_index(leaf.entries, pair)
@@ -498,17 +561,27 @@ class BPlusTree:
         if self._fits(leaf):
             self._write_node(leaf_pid, leaf)
         else:
-            left, right = self._split_leaf(leaf)
-            right_pid = self._allocate_node(right)
-            left.link = right_pid
-            self._write_node(leaf_pid, left)
-            self._leaf_page_count += 1
-            self._tree_page_count += 1
-            self._propagate_split(leaf_pid, right.entries[0], right_pid, path)
+            groups = self._split_leaf(leaf)
+            right_pages: list[tuple[int, _Node]] = []
+            next_pid = leaf.link
+            for group in reversed(groups[1:]):
+                group.link = next_pid
+                next_pid = self._allocate_node(group)
+                right_pages.append((next_pid, group))
+            groups[0].link = next_pid
+            self._write_node(leaf_pid, groups[0])
+            self._leaf_page_count += len(right_pages)
+            self._tree_page_count += len(right_pages)
+            left_pid = leaf_pid
+            for right_pid, right in reversed(right_pages):
+                self._propagate_split(left_pid, right.entries[0], right_pid, path)
+                # An earlier split may have changed ancestors or the root.
+                left_pid, _, path = self._find_leaf(self._pair(right.entries[0]))
         self._entry_count += 1
         self._header_dirty = True
         return True
 
+    @synchronized
     def delete(self, key: object, record_id: RecordId) -> bool:
         """Remove one exact ``(key, RecordId)`` pair.
 
@@ -519,6 +592,10 @@ class BPlusTree:
         self._check_open()
         self._validate_key(key)
         self._validate_record_id(record_id)
+        with self._mutation():
+            return self._delete(key, record_id)
+
+    def _delete(self, key: object, record_id: RecordId) -> bool:
         pair = (key, int(record_id.page_id), record_id.slot_id)
         leaf_pid, leaf, path = self._find_leaf(pair)
         position = self._insert_index(leaf.entries, pair)
@@ -531,7 +608,6 @@ class BPlusTree:
             self._write_node(leaf_pid, leaf)
         elif leaf.entries:
             self._write_node(leaf_pid, leaf)
-            self._refresh_separators()
         else:
             self._unlink_leaf(leaf_pid)
             self._leaf_page_count -= 1
@@ -574,8 +650,12 @@ class BPlusTree:
             except ValueError as exc:
                 raise BPlusTreeCorruptionError("Empty child is absent from its parent.") from exc
             del parent.children[child_index]
-            # Entries are regenerated below from child minima.  A node with no
-            # children cannot be represented as a routing node and is detached.
+            # Remove the boundary adjacent to the detached child. Remaining
+            # separators still bound their subtrees; replacing them with new
+            # VARCHAR minima could overflow an otherwise valid parent page.
+            if parent.entries:
+                del parent.entries[max(0, child_index - 1)]
+            # A node with no children cannot route and must be detached.
             if not parent.children:
                 if parent_pid == self._root_page_id:
                     return
@@ -584,43 +664,9 @@ class BPlusTree:
             # Internal-node ``link`` is the persisted first-child pointer;
             # keep it synchronized when removing the leftmost child.
             parent.link = parent.children[0]
-            parent.entries = [self._subtree_min(child) for child in parent.children[1:]]
             self._write_node(parent_pid, parent)
-            self._refresh_separators()
             return
         # The root has lost its final child; final normalization follows.
-
-    def _refresh_separators(self) -> None:
-        """Recompute reachable internal separators from subtree minima.
-
-        Deletion can change a leftmost minimum that is represented one or more
-        levels up.  Recomputing the small routing frontier avoids stale
-        separators without introducing occupancy balancing.
-        """
-        def refresh(pid: int) -> Optional[_LeafEntry]:
-            node = self._read_node(pid)
-            if node.node_type == LEAF:
-                return node.entries[0] if node.entries else None
-            assert node.children is not None
-            minima = [refresh(child) for child in node.children]
-            if any(value is None for value in minima):
-                raise BPlusTreeCorruptionError("Reachable internal node has an empty child subtree.")
-            entries = [value for value in minima[1:] if value is not None]
-            if node.entries != entries:
-                node.entries = entries
-                self._write_node(pid, node)
-            return minima[0]
-
-        refresh(self._root_page_id)
-
-    def _subtree_min(self, pid: int) -> _LeafEntry:
-        node = self._read_node(pid)
-        while node.node_type == INTERNAL:
-            assert node.children is not None
-            node = self._read_node(node.children[0])
-        if not node.entries:
-            raise BPlusTreeCorruptionError("Non-root B+ tree subtree has an empty leaf.")
-        return node.entries[0]
 
     def _normalize_empty_root(self) -> None:
         """Restore the documented empty-tree representation without reclamation."""
@@ -654,6 +700,7 @@ class BPlusTree:
         self._height += 1
         self._tree_page_count += 1
 
+    @synchronized
     def search(self, key: object) -> tuple[RecordId, ...]:
         """Return RecordIds for one key, sorted by their persistent RecordId."""
         self._check_open()
@@ -676,6 +723,7 @@ class BPlusTree:
             pid = leaf.link
             leaf = self._read_node(pid, stats)
 
+    @synchronized
     def scan_range(
         self,
         lower: Optional[object] = None,
@@ -723,6 +771,7 @@ class BPlusTree:
             return False
         return ""
 
+    @synchronized
     def validate_structure(self) -> None:
         """Validate reachable ordering, depth, leaf chain, and persisted counters."""
         self._check_open()
@@ -730,14 +779,14 @@ class BPlusTree:
         seen: set[int] = set()
         depths: set[int] = set()
 
-        def subtree_min(pid: int) -> _LeafEntry:
+        def subtree_edge(pid: int, *, maximum: bool = False) -> _LeafEntry:
             node = self._read_node(pid)
             while node.node_type == INTERNAL:
                 assert node.children is not None
-                node = self._read_node(node.children[0])
+                node = self._read_node(node.children[-1 if maximum else 0])
             if not node.entries:
                 raise BPlusTreeCorruptionError("Non-root B+ tree subtree has an empty leaf.")
-            return node.entries[0]
+            return node.entries[-1 if maximum else 0]
 
         def visit(pid: int, depth: int) -> None:
             if pid in seen:
@@ -752,8 +801,11 @@ class BPlusTree:
             for index, child in enumerate(node.children):
                 visit(child, depth + 1)
                 if index > 0:
-                    if self._pair(subtree_min(child)) != self._pair(node.entries[index - 1]):
-                        raise BPlusTreeCorruptionError("Internal separator does not equal its right child minimum.")
+                    separator = self._pair(node.entries[index - 1])
+                    left_max = self._pair(subtree_edge(node.children[index - 1], maximum=True))
+                    right_min = self._pair(subtree_edge(child))
+                    if not left_max < separator <= right_min:
+                        raise BPlusTreeCorruptionError("Internal separator does not bound its adjacent children.")
 
         visit(self._root_page_id, 1)
         if depths != {self._height}:
@@ -779,6 +831,7 @@ class BPlusTree:
         if len(ordered_chain) != self._entry_count or len(leaves) != self._leaf_page_count:
             raise BPlusTreeCorruptionError("B+ tree header counters disagree with reachable structure.")
 
+    @synchronized
     def close(self) -> None:
         """Flush and close the tree's dedicated buffer pool and page file."""
         if self._closed:

@@ -1,7 +1,9 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { routes } from "./router";
+
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((yes) => { resolve = yes; }); return { promise, resolve }; }
 
 afterEach(() => {
   cleanup();
@@ -24,7 +26,7 @@ describe("application routing", () => {
     expect(screen.getByRole("heading", { name: "Workspace" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Database" })).toBeInTheDocument();
 
-    const links = [["Overview", "/"], ["Tasks", "/tasks"], ["Board", "/board"], ["SQL Console", "/sql"], ["Engine", "/engine"]] as const;
+    const links = [["Common Dashboard", "/"], ["All Tasks", "/all-tasks"], ["Workspace Dashboard", "/workspace"], ["Tasks", "/tasks"], ["Board", "/board"], ["SQL Console", "/sql"], ["Engine", "/engine"]] as const;
     for (const [name, href] of links) {
       const matchingLinks = screen.getAllByRole("link", { name });
       expect(matchingLinks).toHaveLength(2);
@@ -73,6 +75,25 @@ describe("application routing", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", { method: "POST" });
   });
 
+  it("does not restore product UI when a pending workspace response arrives after logout", async () => {
+    const workspaces = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path === "/api/auth/me") return Promise.resolve(new Response(JSON.stringify({ id: 1, name: "Sithi", email: "sithi@strata.local" })));
+      if (path === "/api/users/1/workspaces") return workspaces.promise;
+      if (path === "/health") return Promise.resolve(new Response(JSON.stringify({ status: "ok" })));
+      if (path === "/api/auth/logout") return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.reject(new Error(`Unexpected path ${path}`));
+    }));
+    const router = createMemoryRouter(routes, { initialEntries: ["/tasks"] });
+    render(<RouterProvider router={router} />);
+    const signOut = await screen.findAllByRole("button", { name: "Sign out" });
+    fireEvent.click(signOut[0]);
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeInTheDocument();
+    await act(async () => workspaces.resolve(new Response(JSON.stringify([{ id: 3, name: "Late workspace", kind: "COLLABORATIVE" }]))));
+    expect(screen.getByRole("heading", { name: "Welcome back" })).toBeInTheDocument();
+    expect(screen.queryByText("Late workspace")).not.toBeInTheDocument();
+  });
+
   it("keeps product UI and shows safe feedback when logout fails", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path === "/api/auth/me") return Promise.resolve(new Response(JSON.stringify({ id: 1, name: "Sithi", email: "sithi@strata.local" })));
@@ -88,5 +109,32 @@ describe("application routing", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not sign you out. Please try again.");
     expect(screen.getByRole("heading", { name: "Tasks" })).toBeInTheDocument();
     expect(screen.queryByText("Internal detail")).not.toBeInTheDocument();
+  });
+
+  it("validates a member email and adds an existing workspace member by email", async () => {
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path === "/api/auth/me") return Promise.resolve(new Response(JSON.stringify({ id: 1, name: "Owner", email: "owner@strata.local" })));
+      if (path === "/health") return Promise.resolve(new Response(JSON.stringify({ status: "ok" })));
+      if (path === "/api/users/1/workspaces") return Promise.resolve(new Response(JSON.stringify([{ id: 3, name: "Team", kind: "COLLABORATIVE" }])));
+      if (path === "/api/workspaces/3/projects") return Promise.resolve(new Response(JSON.stringify([])));
+      if (path === "/api/workspaces/3/members") {
+        if (options?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ workspace_id: 3, user_id: 8, role: "MEMBER", name: "Ada", email: "ada@strata.local", account_state: "ACTIVE" }), { status: 201 }));
+        return Promise.resolve(new Response(JSON.stringify([{ workspace_id: 3, user_id: 1, role: "OWNER", name: "Owner", email: "owner@strata.local", account_state: "ACTIVE" }])));
+      }
+      return Promise.reject(new Error(`Unexpected path ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const router = createMemoryRouter(routes, { initialEntries: ["/tasks"] });
+    render(<RouterProvider router={router} />);
+
+    const input = await screen.findByRole("textbox", { name: "Member email" });
+    fireEvent.change(input, { target: { value: "not-an-email" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Enter a valid member email.");
+    expect(fetchMock.mock.calls.some(([path, options]) => path === "/api/workspaces/3/members" && options?.method === "POST")).toBe(false);
+
+    fireEvent.change(input, { target: { value: "ada@strata.local" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/workspaces/3/members", expect.objectContaining({ method: "POST", body: JSON.stringify({ email: "ada@strata.local" }) })));
   });
 });

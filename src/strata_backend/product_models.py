@@ -60,6 +60,42 @@ class Task:
     created_by_user_id: int
     created_at: int
     updated_at: int
+    due_date: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AssignedTask:
+    task: Task
+    project_name: str
+    workspace_id: int
+    workspace_name: str
+    assignee_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class TaskActivity:
+    id: int
+    task_id: int
+    project_id: int
+    workspace_id: int
+    actor_user_id: int
+    event_type: str
+    details: str | None
+    created_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class Notification:
+    id: int
+    recipient_user_id: int
+    event_type: str
+    summary: str
+    workspace_id: int | None
+    project_id: int | None
+    task_id: int | None
+    created_at: int
+    is_read: bool
+    dismissed_at: int | None
 
 
 @dataclass(frozen=True, slots=True)

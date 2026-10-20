@@ -1,23 +1,32 @@
 """FastAPI transport boundary for the Strata product service."""
 
+import json
 import logging
 from collections.abc import Callable
+from dataclasses import asdict
 
-from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from strata_backend.product_schemas import (
     AddWorkspaceMember,
+    AssignedTaskPage,
     CreateNote,
     CreateProject,
     CreateTask,
     CreateWorkspace,
+    DashboardResponse,
     NoteResponse,
+    NotificationPage,
+    NotificationReadState,
+    NotificationResponse,
+    NotificationUpdateCount,
     OwnershipTransferResponse,
     LoginRequest,
     RegisterAccount,
     ProjectResponse,
     TaskResponse,
+    TaskActivityPage,
     UpdateNote,
     UpdateProject,
     UpdateTask,
@@ -25,6 +34,7 @@ from strata_backend.product_schemas import (
     UpdateWorkspace,
     TransferWorkspaceOwnership,
     UserResponse,
+    UnreadCountResponse,
     WorkspaceMemberResponse,
     WorkspaceResponse,
 )
@@ -33,6 +43,7 @@ from strata_backend.product_auth import (
     clear_session_cookie,
     set_session_cookie,
 )
+from strata_engine.schema.exceptions import ValueOutOfRangeError, TupleSizeError
 from strata_backend.product_models import User
 from strata_backend.product_service import (
     ProductConflictError,
@@ -103,6 +114,8 @@ def register_product_exception_handlers(application: FastAPI) -> None:
             exception_type,
             _domain_exception_handler(status_code, code),
         )
+    for exception_type in (ValueOutOfRangeError, TupleSizeError):
+        application.add_exception_handler(exception_type, _domain_exception_handler(422, "PRODUCT_VALIDATION_ERROR"))
     application.add_exception_handler(ProductServiceError, _internal_service_error_handler)
 
 
@@ -159,12 +172,7 @@ def logout(
     service: ProductService = Depends(get_product_service),
 ) -> Response:
     if session_token is not None:
-        session = service.find_session_by_token(session_token)
-        if session is not None:
-            try:
-                service.revoke_session(session.id)
-            except ProductServiceError:
-                pass
+        service.revoke_session_by_token(session_token)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookie(response, secure=_cookie_secure(request))
     return response
@@ -222,7 +230,7 @@ def list_workspace_members(workspace_id: int, current_user: User = Depends(get_c
 def add_workspace_member(
     workspace_id: int, body: AddWorkspaceMember, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
 ) -> object:
-    return _member_response(service.add_workspace_member(workspace_id, body.user_id, actor_user_id=current_user.id), service)
+    return _member_response(service.add_workspace_member_by_email(workspace_id, body.email, actor_user_id=current_user.id), service)
 
 
 @router.post("/workspaces/{workspace_id}/transfer-ownership", response_model=OwnershipTransferResponse)
@@ -270,8 +278,69 @@ def delete_project(project_id: int, current_user: User = Depends(get_current_use
 
 
 @router.get("/projects/{project_id}/tasks", response_model=list[TaskResponse])
-def list_tasks(project_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
-    return service.list_tasks(project_id, actor_user_id=current_user.id)
+def list_tasks(
+    project_id: int, query: str | None = None, task_status: str | None = Query(default=None, alias="status"),
+    priority: str | None = None, due_before: str | None = None, due_after: str | None = None,
+    sort: str = "id", limit: int = 200, offset: int = 0,
+    current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    return service.list_tasks(
+        project_id, actor_user_id=current_user.id, query=query, status=task_status,
+        priority=priority, due_before=due_before, due_after=due_after,
+        sort=sort, limit=limit, offset=offset,
+    )
+
+
+@router.get("/my/tasks", response_model=AssignedTaskPage)
+def list_my_tasks(
+    query: str | None = None, task_status: str | None = Query(default=None, alias="status"),
+    priority: str | None = None, due_before: str | None = None, due_after: str | None = None,
+    workspace_id: int = Query(ge=1), project_id: int | None = None,
+    sort: str = "updated_desc", limit: int = 50, offset: int = 0,
+    current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    items, total = service.list_assigned_tasks(
+        actor_user_id=current_user.id, query=query, status=task_status, priority=priority,
+        due_before=due_before, due_after=due_after, workspace_id=workspace_id,
+        project_id=project_id, sort=sort, limit=limit, offset=offset,
+    )
+    return {
+        "items": [dict(asdict(item.task), project_name=item.project_name, workspace_id=item.workspace_id, workspace_name=item.workspace_name, assignee_name=item.assignee_name) for item in items],
+        "total": total, "limit": limit, "offset": offset,
+    }
+
+
+@router.get("/tasks", response_model=AssignedTaskPage)
+def list_all_tasks(
+    query: str | None = None, task_status: str | None = Query(default=None, alias="status"),
+    priority: str | None = None, due_before: str | None = None, due_after: str | None = None,
+    workspace_id: int | None = None, project_id: int | None = None,
+    sort: str = "updated_desc", limit: int = 50, offset: int = 0,
+    current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    items, total = service.list_accessible_tasks(
+        actor_user_id=current_user.id, query=query, status=task_status, priority=priority,
+        due_before=due_before, due_after=due_after, workspace_id=workspace_id,
+        project_id=project_id, sort=sort, limit=limit, offset=offset,
+    )
+    return {
+        "items": [dict(asdict(item.task), project_name=item.project_name, workspace_id=item.workspace_id, workspace_name=item.workspace_name, assignee_name=item.assignee_name) for item in items],
+        "total": total, "limit": limit, "offset": offset,
+    }
+
+
+@router.get("/dashboard", response_model=DashboardResponse)
+def common_dashboard(
+    current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    return service.dashboard(actor_user_id=current_user.id)
+
+
+@router.get("/workspaces/{workspace_id}/dashboard", response_model=DashboardResponse)
+def workspace_dashboard(
+    workspace_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    return service.dashboard(actor_user_id=current_user.id, workspace_id=workspace_id)
 
 
 @router.post("/projects/{project_id}/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
@@ -282,7 +351,8 @@ def create_task(project_id: int, body: CreateTask, current_user: User = Depends(
         description=body.description,
         status=body.status,
         priority=body.priority,
-        assignee_user_id=body.assignee_user_id, actor_user_id=current_user.id,
+        assignee_user_id=body.assignee_user_id, due_date=body.due_date,
+        actor_user_id=current_user.id,
     )
 
 
@@ -299,6 +369,62 @@ def update_task(task_id: int, body: UpdateTask, current_user: User = Depends(get
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(task_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> Response:
     service.delete_task(task_id, actor_user_id=current_user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/tasks/{task_id}/activity", response_model=TaskActivityPage)
+def list_task_activity(
+    task_id: int, limit: int = 50, offset: int = 0,
+    current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    items, total = service.list_task_activity(task_id, actor_user_id=current_user.id, limit=limit, offset=offset)
+    return {
+        "items": [
+            {
+                "id": item.id, "task_id": item.task_id, "project_id": item.project_id,
+                "workspace_id": item.workspace_id, "actor_user_id": item.actor_user_id,
+                "event_type": item.event_type,
+                "details": None if item.details is None else json.loads(item.details),
+                "created_at": item.created_at,
+            }
+            for item in items
+        ],
+        "total": total, "limit": limit, "offset": offset,
+    }
+
+
+@router.get("/notifications", response_model=NotificationPage)
+def list_notifications(
+    unread_only: bool = False, limit: int = 50, offset: int = 0,
+    current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    items, total = service.list_notifications(actor_user_id=current_user.id, unread_only=unread_only, limit=limit, offset=offset)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/notifications/unread-count", response_model=UnreadCountResponse)
+def unread_notification_count(current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return {"unread_count": service.unread_notification_count(actor_user_id=current_user.id)}
+
+
+@router.patch("/notifications/{notification_id}", response_model=NotificationResponse)
+def set_notification_read(
+    notification_id: int, body: NotificationReadState,
+    current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> object:
+    return service.set_notification_read(notification_id, body.is_read, actor_user_id=current_user.id)
+
+
+@router.post("/notifications/mark-all-read", response_model=NotificationUpdateCount)
+def mark_all_notifications_read(current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service)) -> object:
+    return {"updated": service.mark_all_notifications_read(actor_user_id=current_user.id)}
+
+
+@router.delete("/notifications/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
+def dismiss_notification(
+    notification_id: int, current_user: User = Depends(get_current_user), service: ProductService = Depends(get_product_service),
+) -> Response:
+    service.dismiss_notification(notification_id, actor_user_id=current_user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

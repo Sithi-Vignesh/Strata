@@ -4,8 +4,37 @@ import { StrataApiError } from "../api/strata";
 import { useAuth } from "../app/AuthContext";
 
 export function AuthPage({ mode }: { mode: "login" | "register" }) {
-  const auth = useAuth(); const [pending, setPending] = useState(false); const [message, setMessage] = useState<string | null>(null); const registering = mode === "register";
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (pending) return; setPending(true); setMessage(null); const values = new FormData(event.currentTarget); const email = String(values.get("email") ?? ""); const password = String(values.get("password") ?? ""); try { if (registering) await auth.register({ name: String(values.get("name") ?? ""), email, password }); else await auth.login({ email, password }); } catch (error) { if (error instanceof StrataApiError && error.status === 401) setMessage("Invalid email or password."); else if (error instanceof StrataApiError && error.status === 409) setMessage("An account with that email already exists."); else if (error instanceof StrataApiError && error.status === 422) setMessage("Please check the details and try again."); else setMessage("Could not reach Strata. Please try again."); } finally { setPending(false); } };
-  return <main className="flex min-h-svh items-center justify-center bg-[var(--strata-canvas)] px-5 py-10"><section className="w-full max-w-md rounded-xl border border-[var(--strata-border)] bg-[var(--strata-surface)] p-7 shadow-sm sm:p-9"><p className="text-sm font-bold tracking-[0.16em] text-[var(--strata-accent)]">STRATA</p><h1 className="mt-6 text-2xl font-semibold text-[var(--strata-text)]">{registering ? "Create your workspace" : "Welcome back"}</h1><p className="mt-2 text-sm leading-6 text-[var(--strata-muted)]">{registering ? "Start with a personal workspace, ready for your work." : "Sign in to continue to your Strata workspace."}</p>{auth.status === "error" && <div className="mt-5 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-950" role="alert">Could not restore your session. <button className="font-semibold underline" onClick={auth.retry} type="button">Retry</button></div>}{message && <div className="mt-5 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-950" role="alert">{message}</div>}<form className="mt-7 space-y-5" onSubmit={submit}>{registering && <Field label="Name" name="name" type="text" />}<Field label="Email" name="email" type="email" /><Field label="Password" name="password" type="password" /><button className="w-full rounded-md bg-[var(--strata-accent)] px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={pending} type="submit">{pending ? "Please wait…" : registering ? "Create account" : "Sign in"}</button></form><p className="mt-6 text-center text-sm text-[var(--strata-muted)]">{registering ? "Already have an account? " : "New to Strata? "}<Link className="font-semibold text-[var(--strata-accent)]" to={registering ? "/login" : "/register"}>{registering ? "Sign in" : "Create account"}</Link></p></section></main>;
+  const auth = useAuth();
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const registering = mode === "register";
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); if (pending) return; setPending(true); setMessage(null);
+    const values = new FormData(event.currentTarget); const email = String(values.get("email") ?? ""); const password = String(values.get("password") ?? "");
+    try { if (registering) await auth.register({ name: String(values.get("name") ?? ""), email, password }); else await auth.login({ email, password }); }
+    catch (error) { if (error instanceof StrataApiError && error.status === 401) setMessage("Invalid email or password."); else if (error instanceof StrataApiError && error.status === 409) setMessage("An account with that email already exists."); else if (error instanceof StrataApiError && error.status === 422) setMessage("Please check the details and try again."); else setMessage("Could not reach Strata. Please try again."); }
+    finally { setPending(false); }
+  };
+  return <main className="auth-page">
+    <section className="auth-form-side">
+      <div className="auth-form-wrap">
+        <Link className="auth-wordmark" to="/"><span className="wordmark-mark" aria-hidden="true"><i /><i /><i /></span><span>STRATA</span></Link>
+        <div className="auth-heading"><span className="kicker">{registering ? "Start organizing" : "Welcome to Strata"}</span><h1>{registering ? "Create your workspace" : "Welcome back"}</h1><p>{registering ? "Create your account and start with a private workspace built for focused work." : "Sign in to get back to the work that matters."}</p></div>
+        {auth.status === "error" && <div className="auth-alert" role="alert">Could not restore your session. <button onClick={auth.retry} type="button">Retry</button></div>}
+        {message && <div className="auth-alert" role="alert">{message}</div>}
+        <form className="auth-form" onSubmit={submit}>
+          {registering && <Field autoComplete="name" label="Name" name="name" placeholder="Your name" type="text" />}
+          <Field autoComplete="email" label="Email" name="email" placeholder="you@company.com" type="email" />
+          <label className="auth-field"><span>Password</span><span className="password-field"><input autoComplete={registering ? "new-password" : "current-password"} name="password" placeholder={registering ? "At least 8 characters" : "Enter your password"} required type={showPassword ? "text" : "password"} /><button aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((value) => !value)} type="button">{showPassword ? "Hide" : "Show"}</button></span></label>
+          <button className="button button-primary auth-submit" disabled={pending} type="submit">{pending ? <><span className="spinner" />Please wait…</> : registering ? "Create account" : "Sign in"}</button>
+        </form>
+        <p className="auth-switch">{registering ? "Already have an account? " : "New to Strata? "}<Link to={registering ? "/login" : "/register"}>{registering ? "Sign in" : "Create account"}</Link></p>
+        <p className="auth-security">Secure, session-based authentication · Your workspace data stays private</p>
+      </div>
+    </section>
+    <aside className="auth-art" aria-hidden="true"><div className="auth-glow auth-glow-one" /><div className="auth-glow auth-glow-two" /><div className="auth-art-content"><div className="auth-art-mark"><span /><span /><span /></div><p>Plan clearly.<br />Move work forward.</p><div className="auth-demo"><div className="auth-demo-top"><i /><span /><b /></div><div className="auth-demo-body"><nav><i /><i /><i /><i /></nav><section><header /><div className="auth-demo-columns"><article><b /><span /><span /></article><article><b /><span /><span /><span /></article><article><b /><span /></article></div></section></div></div><blockquote>“A calm place for teams to turn plans into progress.”</blockquote></div></aside>
+  </main>;
 }
-function Field({ label, name, type }: { label: string; name: string; type: string }) { return <label className="block text-sm font-medium text-[var(--strata-text)]">{label}<input className="mt-2 block w-full rounded-md border border-[var(--strata-border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--strata-accent)]" name={name} required type={type} /></label>; }
+
+function Field({ label, name, type, placeholder, autoComplete }: { label: string; name: string; type: string; placeholder: string; autoComplete: string }) { return <label className="auth-field"><span>{label}</span><input autoComplete={autoComplete} name={name} placeholder={placeholder} required type={type} /></label>; }

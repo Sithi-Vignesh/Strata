@@ -1,12 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { OverviewPage } from "./OverviewPage";
 
 vi.mock("../app/ProductContext", () => ({ useProduct: vi.fn() }));
 import { useProduct } from "../app/ProductContext";
 
 describe("OverviewPage", () => {
+  afterEach(cleanup);
   it("aggregates workspace metrics, groups, my tasks, and project progress", () => {
     vi.mocked(useProduct).mockReturnValue(state() as never);
     render(<MemoryRouter><OverviewPage /></MemoryRouter>);
@@ -33,5 +34,5 @@ function state() {
     { id: 2, project_id: 1, title: "Done", description: null, status: "DONE" as const, priority: "LOW" as const, assignee_user_id: null },
     { id: 3, project_id: 1, title: "Moving", description: null, status: "IN_PROGRESS" as const, priority: "MEDIUM" as const, assignee_user_id: null },
   ];
-  return { projects: [{ id: 1, workspace_id: 1, name: "Alpha", description: null }, { id: 2, workspace_id: 1, name: "Beta", description: null }], workspaceTasks: { 1: tasks, 2: [] }, currentUser: { id: 7, name: "User", email: "user@strata.local" }, selectedWorkspaceId: 1, status: "ready" as const, retry: vi.fn(), selectProject: vi.fn() };
+  return { projects: [{ id: 1, workspace_id: 1, name: "Alpha", description: null }, { id: 2, workspace_id: 1, name: "Beta", description: null }], workspaces: [{ id: 1, name: "Team A", kind: "COLLABORATIVE" as const }], workspaceTasks: { 1: tasks, 2: [] }, currentUser: { id: 7, name: "User", email: "user@strata.local" }, selectedWorkspaceId: 1, status: "ready" as const, retry: vi.fn(), selectProject: vi.fn() };
 }

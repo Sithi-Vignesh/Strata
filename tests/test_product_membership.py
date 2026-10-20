@@ -29,18 +29,21 @@ def _team(client: TestClient, headers: dict[str, str]) -> dict[str, object]:
 def test_membership_auth_privacy_addition_and_personal_restrictions(tmp_path) -> None:
     app = create_app(data_dir=tmp_path / "demo", product_data_dir=tmp_path / "product")
     with TestClient(app) as client:
-        assert client.post("/api/workspaces/1/members", json={"user_id": 1}).status_code == 401
+        assert client.post("/api/workspaces/1/members", json={"email": "member@strata.local"}).status_code == 401
         owner = _register(client, "Owner", "owner@strata.local")
         owner_headers = _headers(client)
         member = _register(client, "Member", "member@strata.local")
         member_headers = _headers(client)
         team = _team(client, owner_headers)
         assert client.get(f"/api/workspaces/{team['id']}/members", headers=member_headers).status_code == 404
-        added = client.post(f"/api/workspaces/{team['id']}/members", json={"user_id": member["id"]}, headers=owner_headers)
+        added = client.post(f"/api/workspaces/{team['id']}/members", json={"email": " Member@STRATA.LOCAL "}, headers=owner_headers)
         assert added.status_code == 201
         assert added.json() == {"workspace_id": team["id"], "user_id": member["id"], "role": "MEMBER", "name": "Member", "email": "member@strata.local", "account_state": "ACTIVE"}
-        assert client.post(f"/api/workspaces/{team['id']}/members", json={"user_id": member["id"]}, headers=owner_headers).status_code == 409
-        assert client.post(f"/api/workspaces/{team['id']}/members", json={"user_id": 999}, headers=owner_headers).status_code == 404
+        assert client.post(f"/api/workspaces/{team['id']}/members", json={"email": "member@strata.local"}, headers=owner_headers).status_code == 409
+        unknown = client.post(f"/api/workspaces/{team['id']}/members", json={"email": "unknown@strata.local"}, headers=owner_headers)
+        assert unknown.status_code == 404
+        assert "No registered user" in unknown.json()["detail"]["message"]
+        assert client.post(f"/api/workspaces/{team['id']}/members", json={"user_id": member["id"]}, headers=owner_headers).status_code == 422
         service = app.state.product_service
         inactive = service.create_user("Inactive", "inactive@strata.local")
         inactive_record, inactive_row = service._record_or_not_found("users", inactive.id)
@@ -48,10 +51,10 @@ def test_membership_auth_privacy_addition_and_personal_restrictions(tmp_path) ->
             inactive.id, inactive.name, inactive.email, inactive.password_hash,
             "PENDING_DELETION", inactive.created_at, inactive.deleted_at,
         ), schema=inactive_row.schema))
-        assert client.post(f"/api/workspaces/{team['id']}/members", json={"user_id": inactive.id}, headers=owner_headers).status_code == 409
-        assert client.post(f"/api/workspaces/{team['id']}/members", json={"user_id": owner["id"]}, headers=member_headers).status_code == 403
+        assert client.post(f"/api/workspaces/{team['id']}/members", json={"email": inactive.email}, headers=owner_headers).status_code == 409
+        assert client.post(f"/api/workspaces/{team['id']}/members", json={"email": owner["email"]}, headers=member_headers).status_code == 403
         personal_id = client.get(f"/api/users/{owner['id']}/workspaces", headers=owner_headers).json()[0]["id"]
-        assert client.post(f"/api/workspaces/{personal_id}/members", json={"user_id": member["id"]}, headers=owner_headers).status_code == 403
+        assert client.post(f"/api/workspaces/{personal_id}/members", json={"email": member["email"]}, headers=owner_headers).status_code == 403
 
 
 def test_transfer_and_remove_unassigns_tasks_preserving_attribution(tmp_path) -> None:
@@ -62,7 +65,7 @@ def test_transfer_and_remove_unassigns_tasks_preserving_attribution(tmp_path) ->
         member = _register(client, "Member", "member@strata.local")
         member_headers = _headers(client)
         team = _team(client, owner_headers)
-        assert client.post(f"/api/workspaces/{team['id']}/members", json={"user_id": member["id"]}, headers=owner_headers).status_code == 201
+        assert client.post(f"/api/workspaces/{team['id']}/members", json={"email": member["email"]}, headers=owner_headers).status_code == 201
         assert client.post(f"/api/workspaces/{team['id']}/transfer-ownership", json={"new_owner_user_id": 999}, headers=owner_headers).status_code == 404
         assert client.post(f"/api/workspaces/{team['id']}/transfer-ownership", json={"new_owner_user_id": owner["id"]}, headers=owner_headers).status_code == 409
         assert client.post(f"/api/workspaces/{team['id']}/transfer-ownership", json={"new_owner_user_id": member["id"]}, headers=owner_headers).json() == {"workspace_id": team["id"], "owner_user_id": member["id"], "previous_owner_user_id": owner["id"]}
@@ -121,3 +124,33 @@ def test_membership_compensation_restores_roles_and_assignments(tmp_path, monkey
             service.remove_workspace_member(team["id"], member["id"], actor_user_id=owner["id"])
         assert service.get_task(task.id).assignee_user_id == member["id"]
         assert any(item.user_id == member["id"] for item in service.list_workspace_members(team["id"]))
+
+
+def test_membership_validates_before_writing_and_authorizes_before_email_lookup(tmp_path):
+    app = create_app(data_dir=tmp_path / "demo", product_data_dir=tmp_path / "product")
+    with TestClient(app) as client:
+        owner = _register(client, "Owner", "owner@example.com")
+        owner_headers = _headers(client)
+        outsider = _register(client, "Outsider", "outsider@example.com")
+        outsider_headers = _headers(client)
+        team = _team(client, owner_headers)
+        url = f"/api/workspaces/{team['id']}/members"
+        before = client.get(url, headers=owner_headers).json()
+        for body in ({"email": "invalid"}, {"email": ""}, {"email": 7}, {"email": outsider["email"], "role": "OWNER"}):
+            assert client.post(url, json=body, headers=owner_headers).status_code == 422
+        for email in (owner["email"], "absent@example.com"):
+            response = client.post(url, json={"email": email}, headers=outsider_headers)
+            assert response.status_code == 404
+            assert response.json()["detail"]["message"] == "Resource does not exist."
+        assert client.get(url, headers=owner_headers).json() == before
+
+
+def test_oversized_product_input_returns_validation_error_without_mutation(tmp_path):
+    app = create_app(data_dir=tmp_path / "demo", product_data_dir=tmp_path / "product")
+    with TestClient(app) as client:
+        owner = _register(client, "Owner", "owner@example.com")
+        headers = _headers(client)
+        team = _team(client, headers)
+        url = f"/api/workspaces/{team['id']}/projects"
+        assert client.post(url, json={"name": "x" * 129}, headers=headers).status_code == 422
+        assert client.get(url, headers=headers).json() == []

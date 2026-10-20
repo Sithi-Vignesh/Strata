@@ -36,6 +36,9 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
   const payload = await parseJsonSafely(response);
 
   if (!response.ok) {
+    if (response.status === 401 && !["/api/auth/login", "/api/auth/register"].includes(path)) {
+      window.dispatchEvent(new Event("strata:session-expired"));
+    }
     const detail = extractErrorDetail(payload);
     throw new StrataApiError(
       response.status,

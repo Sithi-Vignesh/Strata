@@ -1,13 +1,21 @@
+import type { ReactNode } from "react";
+
 interface PageHeaderProps {
   title: string;
   description?: string;
+  eyebrow?: string;
+  actions?: ReactNode;
 }
 
-export function PageHeader({ title, description }: PageHeaderProps) {
+export function PageHeader({ title, description, eyebrow, actions }: PageHeaderProps) {
   return (
-    <header className="border-b border-[var(--strata-border)] pb-6">
-      <h1 className="text-2xl font-semibold tracking-[-0.02em] text-[var(--strata-text)] sm:text-3xl">{title}</h1>
-      {description && <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--strata-muted)]">{description}</p>}
+    <header className="page-header">
+      <div>
+        {eyebrow && <p className="page-eyebrow">{eyebrow}</p>}
+        <h1>{title}</h1>
+        {description && <p>{description}</p>}
+      </div>
+      {actions && <div className="page-actions">{actions}</div>}
     </header>
   );
 }

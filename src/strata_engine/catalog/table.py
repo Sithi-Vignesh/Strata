@@ -1,5 +1,7 @@
 """Relational Table abstraction backed by HeapFile and Schema."""
 
+from strata_engine.concurrency import DatabaseLock, synchronized
+
 from typing import Any, Callable, Iterator, Optional, Sequence, Tuple as PyTuple, Union
 
 from strata_engine.schema.exceptions import SchemaMismatchError
@@ -29,6 +31,7 @@ class Table:
         "_closed",
         "_on_close",
         "_indexes",
+        "_lock",
     )
 
     def __init__(
@@ -39,6 +42,8 @@ class Table:
         heap_file: HeapFile,
         on_close: Optional[Callable[["Table"], None]] = None,
         indexes: Sequence[TableIndex] = (),
+        *,
+        operation_lock: DatabaseLock | None = None,
     ) -> None:
         """Initialize a Table instance.
 
@@ -65,6 +70,7 @@ class Table:
         if heap_file.buffer_pool_manager.is_closed:
             raise StorageClosedError("Cannot initialize Table with a closed storage manager.")
 
+        self._lock = operation_lock if operation_lock is not None else DatabaseLock()
         self._table_id: int = table_id
         self._name: str = name
         self._schema: Schema = schema
@@ -104,6 +110,7 @@ class Table:
         """Open operational index bindings attached to this table."""
         return tuple(self._indexes)
 
+    @synchronized
     def index_for_column(self, column_name: str) -> Optional[TableIndex]:
         """Return the deterministic live index binding for one table column.
 
@@ -116,6 +123,7 @@ class Table:
         matches = (index for index in self._indexes if index.column_ordinal == ordinal)
         return min(matches, key=lambda index: index.index_id, default=None)
 
+    @synchronized
     def _attach_index(self, index: TableIndex) -> None:
         """Catalog-internal attachment after successful create/backfill."""
         self._check_not_closed()
@@ -128,6 +136,7 @@ class Table:
                 f"Operation attempted on closed table '{self._name}' (ID {self._table_id})."
             )
 
+    @synchronized
     def insert(self, row: Union[Tuple, Sequence[Any]]) -> RecordId:
         """Insert a typed Tuple or sequence of values into the table.
 
@@ -182,6 +191,7 @@ class Table:
             raise
         return rid
 
+    @synchronized
     def get(self, record_id: RecordId) -> Tuple:
         """Retrieve a typed Tuple by its RecordId.
 
@@ -201,6 +211,7 @@ class Table:
         data = self._heap_file.get_record(record_id)
         return self._serializer.deserialize(data)
 
+    @synchronized
     def delete(self, record_id: RecordId) -> None:
         """Delete a record by its RecordId.
 
@@ -241,6 +252,7 @@ class Table:
                     pass
             raise
 
+    @synchronized
     def update(self, record_id: RecordId, row: Tuple) -> RecordId:
         """Replace one row, preserving its RID when its source page can hold it.
 
@@ -348,6 +360,7 @@ class Table:
             except Exception:
                 pass
 
+    @synchronized
     def scan(self) -> Iterator[PyTuple[RecordId, Tuple]]:
         """Iterate over all active typed records in the table.
 
@@ -358,14 +371,19 @@ class Table:
             StorageClosedError: If the table or storage is closed.
         """
         self._check_not_closed()
-        for rid, data in self._heap_file.scan_records():
-            yield rid, self._serializer.deserialize(data)
+        # Eager snapshot: an abandoned iterator cannot retain a database lock.
+        return iter(tuple(
+            (rid, self._serializer.deserialize(data))
+            for rid, data in self._heap_file.scan_records()
+        ))
 
+    @synchronized
     def count(self) -> int:
         """Return the number of active records in the table via linear scan."""
         self._check_not_closed()
         return sum(1 for _ in self.scan())
 
+    @synchronized
     def close(self) -> None:
         """Close this table and release underlying storage resources.
 

@@ -24,7 +24,20 @@ htmlcov/
 
 # Environment variables
 .env
-*.env.local
+.env.*
+!.env.example
+
+# Temporary, backup, and process files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*.rej
+*.pid
+*.pid.lock
+*~
+.strata.lock
 
 # Local database runtime files (prevent committing runtime DB artifacts)
 data/*.db
@@ -52,3 +65,10 @@ Thumbs.db
 frontend/node_modules/
 frontend/dist/
 frontend/coverage/
+frontend/playwright-report/
+frontend/playwright-report-demo/
+frontend/test-results/
+
+# Isolated verification and live demo data
+/.verification/
+/data/manual-demo/

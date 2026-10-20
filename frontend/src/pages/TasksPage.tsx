@@ -1,37 +1,35 @@
-import { useEffect, useState } from "react";
-import { createTask, deleteTask, updateTask } from "../api/product";
+import { useEffect, useRef, useState } from "react";
+import { createTask, deleteTask, listProjectTasks, updateTask } from "../api/product";
 import { useProduct } from "../app/ProductContext";
 import { DataState } from "../components/data/DataState";
 import { PageHeader } from "../components/layout/PageHeader";
-import { TaskDeleteConfirmation, TaskModal } from "../components/tasks/TaskModal";
 import { TaskDetailModal } from "../components/tasks/TaskDetailModal";
+import { TaskDeleteConfirmation, TaskModal } from "../components/tasks/TaskModal";
 import { TaskTable } from "../components/tasks/TaskTable";
-import type { CreateTaskInput, Task, UpdateTaskInput } from "../types/product";
+import type { CreateTaskInput, Task, TaskPriority, TaskSort, TaskStatus, UpdateTaskInput } from "../types/product";
 
 export function TasksPage() {
   const { tasks, currentUser, memberUsers, selectedWorkspaceId, selectedProjectId, status, retry, refreshTasks } = useProduct();
-  const [editing, setEditing] = useState<Task | null | "new">(null);
-  const [deleting, setDeleting] = useState<Task | null>(null);
-  const [detail, setDetail] = useState<Task | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const loading = status === "loading";
-  const error = status === "error";
-  useEffect(() => {
-    if (editing !== null && editing !== "new" && editing.project_id !== selectedProjectId) setEditing(null);
-    if (deleting !== null && deleting.project_id !== selectedProjectId) setDeleting(null);
-    if (detail !== null && detail.project_id !== selectedProjectId) setDetail(null);
-  }, [selectedProjectId, editing, deleting, detail]);
-  const afterMutation = async (action: () => Promise<unknown>, verb: string) => { await action(); try { await refreshTasks(); return true; } catch { setNotice(`Task was ${verb}, but the latest task list could not be refreshed.`); return false; } };
-  const create = async (input: CreateTaskInput) => { if (selectedProjectId === null) throw new Error("Select a project before creating a task."); return afterMutation(() => createTask(selectedProjectId, input), "created"); };
+  const [editing, setEditing] = useState<Task | null | "new">(null), [deleting, setDeleting] = useState<Task | null>(null), [detail, setDetail] = useState<Task | null>(null), [notice, setNotice] = useState<string | null>(null);
+  const [query, setQuery] = useState(""), [debouncedQuery, setDebouncedQuery] = useState(""), [statusFilter, setStatusFilter] = useState<"" | TaskStatus>(""), [priorityFilter, setPriorityFilter] = useState<"" | TaskPriority>(""), [dueBefore, setDueBefore] = useState(""), [sort, setSort] = useState<TaskSort>("id");
+  const [visibleTasks, setVisibleTasks] = useState<Task[]>(tasks), [filterLoading, setFilterLoading] = useState(false);
+  const filterVersion = useRef(0); const loading = status === "loading", error = status === "error";
+
+  useEffect(() => { if (editing !== null && editing !== "new" && editing.project_id !== selectedProjectId) setEditing(null); if (deleting?.project_id !== selectedProjectId) setDeleting(null); if (detail !== null) { const current = tasks.find((task) => task.id === detail.id); if (!current || current.project_id !== selectedProjectId) setDetail(null); else if (current !== detail) setDetail(current); } }, [selectedProjectId, tasks, editing, deleting, detail]);
+  useEffect(() => { const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 300); return () => window.clearTimeout(timer); }, [query]);
+  useEffect(() => { if (selectedProjectId === null) { setVisibleTasks([]); return; } const version = ++filterVersion.current; setFilterLoading(true); void listProjectTasks(selectedProjectId, { query: debouncedQuery || undefined, status: statusFilter || undefined, priority: priorityFilter || undefined, due_before: dueBefore || undefined, sort, limit: 200 }).then((next) => { if (version === filterVersion.current) setVisibleTasks(next); }, (reason) => { if (version === filterVersion.current) setNotice(reason instanceof Error ? reason.message : "Could not filter tasks."); }).finally(() => { if (version === filterVersion.current) setFilterLoading(false); }); return () => { ++filterVersion.current; }; }, [debouncedQuery, dueBefore, priorityFilter, selectedProjectId, sort, statusFilter, tasks]);
+  useEffect(() => { const params = new URLSearchParams(window.location.search); const requested = Number(params.get("task")); if (Number.isInteger(requested) && requested > 0) { const task = tasks.find((item) => item.id === requested); if (task) { setDetail(task); window.history.replaceState({}, "", window.location.pathname); } } else if (params.get("create") === "1" && selectedProjectId !== null) { setEditing("new"); window.history.replaceState({}, "", window.location.pathname); } }, [selectedProjectId, tasks]);
+  const afterMutation = async (action: () => Promise<unknown>, verb: string) => { await action(); window.dispatchEvent(new Event("strata:notifications-changed")); try { await refreshTasks(); } catch { setNotice(`Task was ${verb}, but the latest task list could not be refreshed.`); } return true; };
+  const create = (input: CreateTaskInput) => selectedProjectId === null ? Promise.reject(new Error("Select a project before creating a task.")) : afterMutation(() => createTask(selectedProjectId, input), "created");
   const update = (task: Task, input: UpdateTaskInput) => Object.keys(input).length === 0 ? Promise.resolve(true) : afterMutation(() => updateTask(task.id, input), "saved");
-  const remove = async () => { if (deleting === null) return true; const result = await afterMutation(() => deleteTask(deleting.id), "deleted"); setDeleting(null); return result; };
-  return <section className="max-w-6xl"><PageHeader description="Track and review work across the Strata workspace." title="Tasks" />
-    {!loading && !error && selectedProjectId !== null && <div className="mt-6 flex justify-end"><button className="rounded-md bg-[var(--strata-accent)] px-4 py-2 text-sm font-semibold text-white" onClick={() => { setNotice(null); setEditing("new"); }} type="button">New task</button></div>}
-    {notice && <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="status">{notice}</div>}
-    <DataState error={error} errorMessage="Could not load tasks for this project." loading={loading} loadingMessage="Loading tasks…" onRetry={retry} />
-    {!loading && !error && selectedWorkspaceId === null && <p className="py-10 text-sm text-[var(--strata-muted)]">No workspaces available.</p>}
-    {!loading && !error && selectedWorkspaceId !== null && selectedProjectId === null && <p className="py-10 text-sm text-[var(--strata-muted)]">No projects in this workspace.</p>}
-    {!loading && !error && selectedProjectId !== null && (tasks.length ? <TaskTable memberUsers={memberUsers} onDelete={setDeleting} onEdit={setEditing} onOpen={setDetail} tasks={tasks} /> : <p className="py-10 text-sm text-[var(--strata-muted)]">No tasks in this project.</p>)}
+  const remove = async () => { if (!deleting) return true; const result = await afterMutation(() => deleteTask(deleting.id), "deleted"); setDeleting(null); return result; };
+  const filtered = Boolean(debouncedQuery || statusFilter || priorityFilter || dueBefore || sort !== "id");
+  return <section className="page-container"><PageHeader eyebrow="Project work" description="Track, assign, and update work in the selected project." title="Tasks" actions={!loading && !error && selectedProjectId !== null ? <button className="button button-primary" onClick={() => { setNotice(null); setEditing("new"); }} type="button"><span aria-hidden="true">+</span> New task</button> : undefined} />
+    {notice && <div className="alert alert-warning" role="status">{notice}</div>}<DataState error={error} errorMessage="Could not load tasks for this project." loading={loading} loadingMessage="Loading tasks…" onRetry={retry} />
+    {!loading && !error && selectedWorkspaceId === null && <p className="dashboard-empty">No workspaces available.</p>}{!loading && !error && selectedWorkspaceId !== null && selectedProjectId === null && <p className="dashboard-empty">No projects in this workspace.</p>}
+    {!loading && !error && selectedProjectId !== null && <div className="task-toolbar task-toolbar-expanded"><label className="task-search"><span aria-hidden="true">⌕</span><input aria-label="Search tasks" onChange={(event) => setQuery(event.target.value)} placeholder="Search task titles…" value={query} /></label><TaskFilter label="Status" value={statusFilter} onChange={(value) => setStatusFilter(value as "" | TaskStatus)} options={["", "TODO", "IN_PROGRESS", "DONE"]} /><TaskFilter label="Priority" value={priorityFilter} onChange={(value) => setPriorityFilter(value as "" | TaskPriority)} options={["", "LOW", "MEDIUM", "HIGH"]} /><label className="task-filter"><span>Due before</span><input aria-label="Due before" onChange={(event) => setDueBefore(event.target.value)} type="date" value={dueBefore} /></label><TaskFilter label="Sort" value={sort} onChange={(value) => setSort(value as TaskSort)} options={["id", "updated_desc", "due_asc", "due_desc", "title"]} />{filtered && <button className="button button-secondary" onClick={() => { setQuery(""); setStatusFilter(""); setPriorityFilter(""); setDueBefore(""); setSort("id"); }} type="button">Clear filters</button>}<span className="task-result-count">{filterLoading ? "Filtering…" : `${visibleTasks.length} results`}</span></div>}
+    {!loading && !error && selectedProjectId !== null && (tasks.length ? (visibleTasks.length ? <TaskTable memberUsers={memberUsers} onDelete={setDeleting} onEdit={setEditing} onOpen={setDetail} tasks={visibleTasks} /> : <p className="dashboard-empty">No tasks match your filters.</p>) : <p className="dashboard-empty">No tasks in this project. Create the first one when you’re ready.</p>)}
     {editing !== null && <TaskModal memberUsers={memberUsers} onClose={() => setEditing(null)} onCreate={create} onUpdate={update} task={editing === "new" ? null : editing} />}{deleting && <TaskDeleteConfirmation onCancel={() => setDeleting(null)} onConfirm={remove} task={deleting} />}{detail && <TaskDetailModal currentUser={currentUser} memberUsers={memberUsers} onClose={() => setDetail(null)} onEdit={(task) => { setDetail(null); setEditing(task); }} task={detail} />}
   </section>;
 }
+function TaskFilter({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) { const allLabel = label === "Status" ? "All statuses" : label === "Priority" ? "All priorities" : `All ${label.toLowerCase()}s`; return <label className="task-filter"><span>{label}</span><select aria-label={label} onChange={(event) => onChange(event.target.value)} value={value}>{options.map((option) => <option key={option || "all"} value={option}>{option ? option.replaceAll("_", " ") : allLabel}</option>)}</select></label>; }

@@ -212,6 +212,8 @@ class _ConcurrentProbeEngine:
     """Minimal engine probe for adapter serialization with bounded coordination."""
 
     def __init__(self) -> None:
+        from strata_engine.concurrency import DatabaseLock
+        self._operation_lock = DatabaseLock()
         self._lock = Lock()
         self._active = 0
         self.max_active = 0
@@ -219,6 +221,9 @@ class _ConcurrentProbeEngine:
         self.first_execution_started = Event()
         self.second_execution_started = Event()
         self.release_execution = Event()
+
+    def operation(self):
+        return self._operation_lock
 
     def execute_profiled(self, sql: str) -> ProfiledExecutionResult:
         with self._lock:

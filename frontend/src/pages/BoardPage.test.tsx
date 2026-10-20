@@ -28,6 +28,27 @@ describe("BoardPage", () => {
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith(1, { status: "DONE" }));
     expect(refreshTasks).toHaveBeenCalledTimes(1);
   });
+
+  it("moves a dragged task only when dropped in a different status column", async () => {
+    vi.mocked(useProduct).mockReturnValue(contextValue() as never);
+    vi.mocked(updateTask).mockResolvedValue({ ...contextValue().tasks[0], status: "DONE" } as never);
+    render(<BoardPage />);
+    const card = screen.getByText("Task").closest("article") as HTMLElement;
+    const done = screen.getByRole("heading", { name: "Done" }).closest("section") as HTMLElement;
+    fireEvent.dragStart(card, { dataTransfer: { effectAllowed: "none", setData: vi.fn() } });
+    fireEvent.dragOver(done, { dataTransfer: { dropEffect: "none" } });
+    fireEvent.drop(done);
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith(1, { status: "DONE" }));
+  });
+
+  it("keeps canonical state and reports a failed movement", async () => {
+    vi.mocked(useProduct).mockReturnValue(contextValue() as never);
+    vi.mocked(updateTask).mockRejectedValue(new Error("Status update failed"));
+    render(<BoardPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Move Task to status" }), { target: { value: "DONE" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Status update failed");
+    expect(screen.getByRole("combobox", { name: "Move Task to status" })).toHaveValue("IN_PROGRESS");
+  });
 });
 
 function contextValue(overrides = {}) {

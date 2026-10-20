@@ -70,6 +70,37 @@ SESSIONS_SCHEMA = Schema([
     Column("expires_at", DataType.BIGINT),
 ])
 
+# Additive sidecar tables preserve the fingerprint of every legacy product row.
+# Strata intentionally has no ALTER TABLE support.
+TASK_DUE_DATES_SCHEMA = Schema([
+    Column("task_id", DataType.BIGINT),
+    Column("due_date", DataType.VARCHAR, max_length=10),
+])
+
+TASK_ACTIVITY_SCHEMA = Schema([
+    Column("id", DataType.BIGINT),
+    Column("task_id", DataType.BIGINT),
+    Column("project_id", DataType.BIGINT),
+    Column("workspace_id", DataType.BIGINT),
+    Column("actor_user_id", DataType.BIGINT),
+    Column("event_type", DataType.VARCHAR, max_length=40),
+    Column("details", DataType.VARCHAR, nullable=True, max_length=2048),
+    Column("created_at", DataType.BIGINT),
+])
+
+NOTIFICATIONS_SCHEMA = Schema([
+    Column("id", DataType.BIGINT),
+    Column("recipient_user_id", DataType.BIGINT),
+    Column("event_type", DataType.VARCHAR, max_length=48),
+    Column("summary", DataType.VARCHAR, max_length=384),
+    Column("workspace_id", DataType.BIGINT, nullable=True),
+    Column("project_id", DataType.BIGINT, nullable=True),
+    Column("task_id", DataType.BIGINT, nullable=True),
+    Column("created_at", DataType.BIGINT),
+    Column("is_read", DataType.BOOLEAN),
+    Column("dismissed_at", DataType.BIGINT, nullable=True),
+])
+
 PRODUCT_SCHEMAS: Mapping[str, Schema] = {
     "users": USERS_SCHEMA,
     "workspaces": WORKSPACES_SCHEMA,
@@ -78,6 +109,9 @@ PRODUCT_SCHEMAS: Mapping[str, Schema] = {
     "tasks": TASKS_SCHEMA,
     "notes": NOTES_SCHEMA,
     "sessions": SESSIONS_SCHEMA,
+    "task_due_dates": TASK_DUE_DATES_SCHEMA,
+    "task_activity": TASK_ACTIVITY_SCHEMA,
+    "notifications": NOTIFICATIONS_SCHEMA,
 }
 
 SEED_TIMESTAMP_MS = 1_700_000_000_000
@@ -101,6 +135,9 @@ PRODUCT_SEED: Mapping[str, tuple[tuple[object, ...], ...]] = {
         (3, 5, 1, "Review the bootstrap contract before adding APIs.", SEED_TIMESTAMP_MS, SEED_TIMESTAMP_MS),
     ),
     "sessions": (),
+    "task_due_dates": (),
+    "task_activity": (),
+    "notifications": (),
 }
 
 PRODUCT_INDEXES: Mapping[str, tuple[str, str]] = {
@@ -113,6 +150,13 @@ PRODUCT_INDEXES: Mapping[str, tuple[str, str]] = {
     "notes_task_id_idx": ("notes", "task_id"),
     "sessions_token_digest_idx": ("sessions", "token_digest"),
     "sessions_user_id_idx": ("sessions", "user_id"),
+    "task_due_dates_task_id_idx": ("task_due_dates", "task_id"),
+    "task_due_dates_due_date_idx": ("task_due_dates", "due_date"),
+    "task_activity_task_id_idx": ("task_activity", "task_id"),
+    "task_activity_workspace_id_idx": ("task_activity", "workspace_id"),
+    "notifications_recipient_user_id_idx": ("notifications", "recipient_user_id"),
+    "notifications_workspace_id_idx": ("notifications", "workspace_id"),
+    "notifications_task_id_idx": ("notifications", "task_id"),
 }
 
 

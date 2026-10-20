@@ -1,6 +1,7 @@
 """FastAPI bridge for the DBthon SQL console."""
 
 from contextlib import asynccontextmanager
+import json
 import logging
 import os
 from pathlib import Path
@@ -8,11 +9,16 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, field_validator
+
+from strata_engine.concurrency import DatabaseBusyError
+from fastapi.responses import JSONResponse, Response
 
 from strata_backend.demo_bootstrap import bootstrap_demo
 from strata_backend.engine_adapter import EngineAdapter
 from strata_backend.product_api import register_product_exception_handlers, router as product_router
+from strata_backend.product_auth import is_trusted_mutation_origin
 from strata_backend.product_bootstrap import bootstrap_product
 from strata_backend.product_service import ProductService
 from strata_engine import (
@@ -64,6 +70,10 @@ class SQLProfileRequest(BaseModel):
     def sql_must_not_be_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("sql must not be empty.")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("sql must contain valid Unicode characters.") from None
         return value
 
 
@@ -133,6 +143,29 @@ def create_app(
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type"],
     )
+
+    @application.middleware("http")
+    async def protect_mutations(request: Request, call_next):
+        if (request.url.path.startswith("/api/")
+                and request.method not in {"GET", "HEAD", "OPTIONS"}
+                and not is_trusted_mutation_origin(request, origin)):
+            return JSONResponse(status_code=403, content={"detail": {
+                "code": "UNTRUSTED_ORIGIN", "message": "Request origin is not allowed.",
+            }})
+        return await call_next(request)
+
+    @application.exception_handler(RequestValidationError)
+    async def invalid_request(_: Request, exc: RequestValidationError) -> Response:
+        # Do not echo passwords or invalid input bytes. Escape malformed Unicode
+        # even in an unknown field name (which can appear in an error location).
+        errors = [{key: error[key] for key in ("type", "loc", "msg")} for error in exc.errors()]
+        return Response(status_code=422, media_type="application/json",
+                        content=json.dumps({"detail": errors}, ensure_ascii=True))
+
+    @application.exception_handler(DatabaseBusyError)
+    async def database_busy(_: Request, exc: DatabaseBusyError) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": {"code": "DATABASE_BUSY", "message": str(exc)}})
+
     register_product_exception_handlers(application)
     application.include_router(product_router)
 
@@ -154,6 +187,8 @@ def create_app(
         try:
             execution = request.app.state.engine_adapter.execute_profiled(body.sql)
             return _serialize_execution(execution)
+        except DatabaseBusyError:
+            raise
         except _CLIENT_QUERY_ERRORS as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

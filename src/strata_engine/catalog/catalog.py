@@ -1,5 +1,7 @@
 """System Catalog implementation managing schemas, table metadata, and persistence."""
 
+from strata_engine.concurrency import DatabaseLock, DirectoryLease, synchronized
+
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -87,6 +89,8 @@ class Catalog:
         self,
         data_dir: Union[Path, str],
         default_pool_size: int = 10,
+        *,
+        operation_lock: DatabaseLock | None = None,
     ) -> None:
         """Initialize and bootstrap or recover the System Catalog.
 
@@ -97,6 +101,7 @@ class Catalog:
         Raises:
             CatalogCorruptionError: If catalog files, metadata headers, or descriptors are corrupted.
         """
+        self._lock = operation_lock if operation_lock is not None else DatabaseLock()
         self._data_dir: Path = Path(data_dir).resolve()
         self._default_pool_size: int = default_pool_size
         self._closed: bool = False
@@ -122,6 +127,14 @@ class Catalog:
         self._index_hwm: int = 0
         self._index_header_rid: Optional[RecordId] = None
 
+        self._lease = DirectoryLease(self._data_dir)
+        try:
+            self._initialize_storage()
+        except BaseException:
+            self.close()
+            raise
+
+    def _initialize_storage(self) -> None:
         tables_exist = self._tables_db_path.exists()
         columns_exist = self._columns_db_path.exists()
 
@@ -431,12 +444,14 @@ class Catalog:
                     physical_max = max(physical_max, int(match.group(1)))
         self._index_hwm = max(persisted_hwm, max(ids, default=0), physical_max)
 
+    @synchronized
     def _on_table_close(self, table: Table) -> None:
         """Internal callback invoked when a Table is manually closed."""
         lower_name = table.name.lower()
         if lower_name in self._open_tables and self._open_tables[lower_name] is table:
             del self._open_tables[lower_name]
 
+    @synchronized
     def create_table(self, name: str, schema: Schema) -> Table:
         """Create a new table with the given name and schema.
 
@@ -506,7 +521,7 @@ class Catalog:
         self._tables_bpm.flush_all()
 
         # 5. Instantiate Table and register in cache
-        tbl = Table(candidate, name, schema, hf, on_close=self._on_table_close)
+        tbl = Table(candidate, name, schema, hf, operation_lock=self._lock, on_close=self._on_table_close)
         meta = TableMetadata(
             table_id=candidate,
             name=name,
@@ -519,6 +534,7 @@ class Catalog:
 
         return tbl
 
+    @synchronized
     def get_table(self, name: str) -> Table:
         """Retrieve an open Table instance by case-insensitive name.
 
@@ -560,10 +576,10 @@ class Catalog:
                 tree = BPlusTree.open(
                     self._indexes_dir / f"index_{index.index_id}.db",
                     index.key_type,
-                    pool_size=self._default_pool_size,
+                    pool_size=self._default_pool_size, operation_lock=self._lock,
                 )
                 bindings.append(TableIndex(index.index_id, index.name, index.column_ordinal, index.key_type, tree))
-            tbl = Table(meta.table_id, meta.name, meta.schema, hf, on_close=self._on_table_close, indexes=bindings)
+            tbl = Table(meta.table_id, meta.name, meta.schema, hf, operation_lock=self._lock, on_close=self._on_table_close, indexes=bindings)
         except Exception as exc:
             for binding in bindings:
                 binding.tree.close()
@@ -582,6 +598,7 @@ class Catalog:
         self._index_header_rid = self._indexes_heap.insert_record(self._indexes_serializer.serialize(header))
         self._indexes_bpm.flush_all()
 
+    @synchronized
     def create_index(self, index_name: str, table_name: str, column_name: str) -> None:
         """Create and backfill a persistent non-unique single-column index."""
         self._check_not_closed()
@@ -605,7 +622,7 @@ class Catalog:
         index_rid: Optional[RecordId] = None
         published = False
         try:
-            tree = BPlusTree.create(path, key_type, pool_size=self._default_pool_size)
+            tree = BPlusTree.create(path, key_type, pool_size=self._default_pool_size, operation_lock=self._lock)
             for rid, row in table.scan():
                 value = row[ordinal]
                 if value is not None:
@@ -644,17 +661,20 @@ class Catalog:
                     pass
             raise
 
+    @synchronized
     def has_table(self, name: str) -> bool:
         """Return whether a user table exists by case-insensitive name."""
         if not isinstance(name, str) or name.startswith("_") or self._closed:
             return False
         return name.lower() in self._tables_meta
 
+    @synchronized
     def list_tables(self) -> List[str]:
         """Return a list of user table names with their original casing preserved."""
         self._check_not_closed()
         return [meta.name for meta in self._tables_meta.values()]
 
+    @synchronized
     def drop_table(self, name: str) -> None:
         """Drop a user table by case-insensitive name.
 
@@ -714,6 +734,7 @@ class Catalog:
         # 5. Remove from in-memory metadata registry
         del self._tables_meta[lower_name]
 
+    @synchronized
     def close(self) -> None:
         """Close all open tables and catalog system files. Idempotent."""
         if self._closed:
@@ -748,6 +769,8 @@ class Catalog:
             self._indexes_pf.close()
         except Exception:
             pass
+
+        self._lease.close()
 
     def __enter__(self) -> "Catalog":
         return self

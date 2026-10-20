@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskDetailModal } from "./TaskDetailModal";
 import * as productApi from "../../api/product";
 
-vi.mock("../../api/product", () => ({ createNote: vi.fn(), deleteNote: vi.fn(), listTaskNotes: vi.fn(), updateNote: vi.fn() }));
+vi.mock("../../api/product", () => ({ createNote: vi.fn(), deleteNote: vi.fn(), listTaskActivity: vi.fn(), listTaskNotes: vi.fn(), updateNote: vi.fn() }));
 
 const user = { id: 1, name: "Sithi", email: "sithi@strata.local" };
 const members = { 1: user };
@@ -11,6 +11,7 @@ const task = { id: 7, project_id: 1, title: "Task detail", description: "A descr
 const note = { id: 3, task_id: 7, author_user_id: 1, content: "Initial note" };
 
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
+beforeEach(() => { vi.mocked(productApi.listTaskActivity).mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 }); });
 
 describe("TaskDetailModal", () => {
   it("loads task-local notes and renders task details with resolved names", async () => {
@@ -103,6 +104,39 @@ describe("TaskDetailModal", () => {
     resolveA([note]);
     await waitFor(() => expect(screen.queryByText("Initial note")).not.toBeInTheDocument());
   });
+
+  it("renders newest-first activity changes and handoff notes from the API", async () => {
+    vi.mocked(productApi.listTaskNotes).mockResolvedValue([]);
+    vi.mocked(productApi.listTaskActivity).mockResolvedValue({ items: [
+      { id: 2, task_id: 7, project_id: 1, workspace_id: 1, actor_user_id: 1, event_type: "ASSIGNEE_CHANGED", details: { from: null, to: 1, handoff_note: "Start with the release checklist." }, created_at: 2_000 },
+      { id: 1, task_id: 7, project_id: 1, workspace_id: 1, actor_user_id: 1, event_type: "TASK_CREATED", details: null, created_at: 1_000 },
+    ], total: 2, limit: 20, offset: 0 });
+    renderDetail();
+    const changes = await screen.findAllByText(/changed|created/i);
+    expect(changes[0]).toHaveTextContent("Assignee changed");
+    expect(screen.getByText(/Start with the release checklist/)).toBeInTheDocument();
+    expect(productApi.listTaskActivity).toHaveBeenCalledWith(7, 20, 0);
+  });
+
+  it("shows activity errors and never retains activity from a prior task", async () => {
+    let resolveA!: (value: { items: never[]; total: number; limit: number; offset: number }) => void;
+    const taskB = { ...task, id: 8, title: "Task B" };
+    vi.mocked(productApi.listTaskNotes).mockResolvedValue([]);
+    vi.mocked(productApi.listTaskActivity).mockImplementation((id) => id === 7 ? new Promise((resolve) => { resolveA = resolve; }) : Promise.reject(new Error("Activity access revoked.")));
+    const view = renderDetail();
+    await waitFor(() => expect(productApi.listTaskActivity).toHaveBeenCalledWith(7, 20, 0));
+    view.rerender(<TaskDetailModal currentUser={user} memberUsers={members} onClose={vi.fn()} task={taskB} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Activity access revoked.");
+    resolveA({ items: [], total: 0, limit: 20, offset: 0 });
+    await waitFor(() => expect(screen.queryByText("Task created")).not.toBeInTheDocument());
+  });
 });
 
 function renderDetail() { return render(<TaskDetailModal currentUser={user} memberUsers={members} onClose={vi.fn()} task={task} />); }
+
+it("keeps teammates' notes readable without offering author-only mutations", async () => {
+  vi.mocked(productApi.listTaskNotes).mockResolvedValue([{ ...note, author_user_id: 2 }]);
+  renderDetail(); await screen.findByText("Initial note");
+  expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+});

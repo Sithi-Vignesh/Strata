@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { executeSqlProfile, getHealth, StrataApiError } from "./strata";
+import { executeSqlProfile, getHealth, requestJson, StrataApiError } from "./strata";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -76,3 +76,15 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+it("signals expired protected sessions but preserves an invalid login error", async () => {
+  const expired = vi.fn();
+  window.addEventListener("strata:session-expired", expired);
+  try {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: { code: "AUTHENTICATION_REQUIRED", message: "Expired" } }), { status: 401 }))));
+    await expect(requestJson("/api/tasks/1")).rejects.toBeInstanceOf(StrataApiError);
+    expect(expired).toHaveBeenCalledTimes(1);
+    await expect(requestJson("/api/auth/login")).rejects.toBeInstanceOf(StrataApiError);
+    expect(expired).toHaveBeenCalledTimes(1);
+  } finally { window.removeEventListener("strata:session-expired", expired); }
+});

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as productApi from "../api/product";
 import { StrataApiError } from "../api/strata";
@@ -8,6 +8,7 @@ vi.mock("../api/product");
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 function Probe() { const auth = useAuth(); return <><p>{`${auth.status}:${auth.user?.name ?? "none"}`}</p><button onClick={() => { void auth.retry(); }} type="button">Retry</button><button onClick={() => { void auth.login({ email: "ada@example.local", password: "password" }); }} type="button">Login</button><button onClick={() => { void auth.register({ name: "Ada", email: "ada@example.local", password: "password" }); }} type="button">Register</button></>; }
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((yes) => { resolve = yes; }); return { promise, resolve }; }
 
 describe("AuthContext", () => {
   it("bootstraps an existing browser session", async () => {
@@ -35,4 +36,33 @@ describe("AuthContext", () => {
     expect(productApi.login).toHaveBeenCalledTimes(1);
     expect(productApi.register).toHaveBeenCalledTimes(1);
   });
+  it("ignores a bootstrap response that arrives after login", async () => {
+    const bootstrap = deferred<Awaited<ReturnType<typeof productApi.getCurrentUser>>>();
+    vi.mocked(productApi.getCurrentUser).mockReturnValue(bootstrap.promise);
+    vi.mocked(productApi.login).mockResolvedValue({ id: 3, name: "Ada", email: "ada@example.local" });
+    render(<AuthProvider><Probe /></AuthProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Login" }));
+    await screen.findByText("authenticated:Ada");
+    await act(async () => bootstrap.resolve({ id: 9, name: "Stale", email: "stale@example.local" }));
+    expect(screen.getByText("authenticated:Ada")).toBeInTheDocument();
+  });
+  it("ignores a login response after the session-expired boundary", async () => {
+    vi.mocked(productApi.getCurrentUser).mockRejectedValue(new StrataApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required."));
+    const login = deferred<Awaited<ReturnType<typeof productApi.login>>>();
+    vi.mocked(productApi.login).mockReturnValue(login.promise);
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await screen.findByText("unauthenticated:none");
+    fireEvent.click(screen.getByRole("button", { name: "Login" }));
+    fireEvent(window, new Event("strata:session-expired"));
+    await act(async () => login.resolve({ id: 3, name: "Ada", email: "ada@example.local" }));
+    expect(screen.getByText("unauthenticated:none")).toBeInTheDocument();
+  });
+});
+
+it("clears an active session when a protected API request expires", async () => {
+  vi.mocked(productApi.getCurrentUser).mockResolvedValue({ id: 2, name: "Ada", email: "ada@example.local" });
+  render(<AuthProvider><Probe /></AuthProvider>);
+  await screen.findByText("authenticated:Ada");
+  fireEvent(window, new Event("strata:session-expired"));
+  expect(await screen.findByText("unauthenticated:none")).toBeInTheDocument();
 });

@@ -4,6 +4,8 @@ Phase 5: Integrates System Catalog, Schema, and Table storage management
 with deterministic engine lifecycle and context management.
 """
 
+from strata_engine.concurrency import DatabaseLock, synchronized
+
 from pathlib import Path
 from typing import Any, List, Optional, Union
 
@@ -48,6 +50,7 @@ class StrataEngine:
                 for database files. If omitted, the engine remains initialized in an
                 unopened state until open() is called with a directory or an error is raised.
         """
+        self._lock = DatabaseLock()
         self._data_dir: Optional[Path] = Path(data_dir) if data_dir is not None else None
         self._initialized: bool = True
         self._is_open: bool = False
@@ -79,6 +82,15 @@ class StrataEngine:
             raise StorageClosedError("Cannot access Catalog on closed StrataEngine. Call open() first.")
         return self._catalog
 
+    def operation(self) -> DatabaseLock:
+        """Serialize a compound operation, including any raw storage access.
+
+        Never await, join workers, or acquire another database lock inside this
+        context. Callbacks must obey the same rule. No rollback is provided.
+        """
+        return self._lock
+
+    @synchronized
     def open(self) -> "StrataEngine":
         """Open the database engine and initialize its System Catalog.
 
@@ -94,10 +106,11 @@ class StrataEngine:
         if self.is_open:
             return self
 
-        self._catalog = Catalog(self._data_dir)
+        self._catalog = Catalog(self._data_dir, operation_lock=self._lock)
         self._is_open = True
         return self
 
+    @synchronized
     def close(self) -> None:
         """Close the database engine and release all open table and catalog resources."""
         if not self._is_open and self._catalog is None:
@@ -110,6 +123,7 @@ class StrataEngine:
             finally:
                 self._catalog = None
 
+    @synchronized
     def create_table(self, name: str, schema: Schema) -> Table:
         """Create a new table in the database.
 
@@ -125,6 +139,7 @@ class StrataEngine:
         """
         return self.catalog.create_table(name, schema)
 
+    @synchronized
     def get_table(self, name: str) -> Table:
         """Retrieve an open Table by name.
 
@@ -140,16 +155,19 @@ class StrataEngine:
         """
         return self.catalog.get_table(name)
 
+    @synchronized
     def create_index(self, index_name: str, table_name: str, column_name: str) -> None:
         """Create a persistent programmatic single-column index."""
         self.catalog.create_index(index_name, table_name, column_name)
 
+    @synchronized
     def has_table(self, name: str) -> bool:
         """Check if a table exists in the database."""
         if not self.is_open:
             return False
         return self.catalog.has_table(name)
 
+    @synchronized
     def drop_table(self, name: str) -> None:
         """Drop a table by name.
 
@@ -162,10 +180,12 @@ class StrataEngine:
         """
         self.catalog.drop_table(name)
 
+    @synchronized
     def list_tables(self) -> List[str]:
         """Return a list of user table names."""
         return self.catalog.list_tables()
 
+    @synchronized
     def status(self) -> dict[str, Any]:
         """Return deterministic engine status information.
 
@@ -180,6 +200,7 @@ class StrataEngine:
             "data_dir": str(self._data_dir) if self._data_dir else None,
         }
 
+    @synchronized
     def execute(self, sql: str) -> QueryResult | CommandResult:
         """Execute one supported SELECT statement or constrained INSERT command.
 
@@ -210,6 +231,7 @@ class StrataEngine:
             return _execute_update(bound)
         raise TypeError(f"Unsupported bound statement type {type(bound).__name__}.")
 
+    @synchronized
     def execute_profiled(self, sql: str) -> ProfiledExecutionResult:
         """Execute SQL once and attach actual scan metadata when it is singular.
 

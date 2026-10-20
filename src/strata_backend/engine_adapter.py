@@ -5,7 +5,6 @@ Provides a clean interface that the backend uses to query engine status and, in 
 phases, execute queries and manage transactions.
 """
 
-from threading import Lock
 from typing import Any, Optional
 from strata_engine import ProfiledExecutionResult, StrataEngine
 
@@ -21,7 +20,7 @@ class EngineAdapter:
                 is created.
         """
         self._engine: StrataEngine = engine if engine is not None else StrataEngine()
-        self._execution_lock = Lock()
+        self._execution_lock = self._engine.operation()
 
     @property
     def engine(self) -> StrataEngine:

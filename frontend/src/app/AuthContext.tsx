@@ -11,9 +11,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null); const [status, setStatus] = useState<AuthStatus>("loading"); const [error, setError] = useState<Error | null>(null); const [logoutPending, setLogoutPending] = useState(false); const requestVersion = useRef(0);
   const bootstrap = useCallback(async () => { const version = ++requestVersion.current; setStatus("loading"); setError(null); setUser(null); try { const currentUser = await getCurrentUser(); if (version !== requestVersion.current) return; setUser(currentUser); setStatus("authenticated"); } catch (caught) { if (version !== requestVersion.current) return; if (caught instanceof StrataApiError && caught.status === 401) setStatus("unauthenticated"); else { setError(asError(caught)); setStatus("error"); } } }, []);
   useEffect(() => { void bootstrap(); }, [bootstrap]);
-  const login = useCallback(async (input: LoginInput) => { setError(null); const currentUser = await loginRequest(input); ++requestVersion.current; setUser(currentUser); setStatus("authenticated"); }, []);
-  const register = useCallback(async (input: RegisterInput) => { setError(null); const currentUser = await registerRequest(input); ++requestVersion.current; setUser(currentUser); setStatus("authenticated"); }, []);
-  const logout = useCallback(async () => { if (logoutPending) return false; setLogoutPending(true); setError(null); try { await logoutRequest(); ++requestVersion.current; setUser(null); setStatus("unauthenticated"); return true; } catch (caught) { setError(asError(caught)); return false; } finally { setLogoutPending(false); } }, [logoutPending]);
+  useEffect(() => {
+    const expire = () => { ++requestVersion.current; setUser(null); setStatus("unauthenticated"); setError(null); };
+    window.addEventListener("strata:session-expired", expire);
+    return () => window.removeEventListener("strata:session-expired", expire);
+  }, []);
+  const login = useCallback(async (input: LoginInput) => { const version = ++requestVersion.current; setError(null); const currentUser = await loginRequest(input); if (version !== requestVersion.current) return; setUser(currentUser); setStatus("authenticated"); }, []);
+  const register = useCallback(async (input: RegisterInput) => { const version = ++requestVersion.current; setError(null); const currentUser = await registerRequest(input); if (version !== requestVersion.current) return; setUser(currentUser); setStatus("authenticated"); }, []);
+  const logout = useCallback(async () => { if (logoutPending) return false; const version = ++requestVersion.current; setLogoutPending(true); setError(null); try { await logoutRequest(); if (version !== requestVersion.current) return false; setUser(null); setStatus("unauthenticated"); return true; } catch (caught) { if (version === requestVersion.current) setError(asError(caught)); return false; } finally { setLogoutPending(false); } }, [logoutPending]);
   const value = useMemo(() => ({ user, status, error, logoutPending, login, register, logout, retry: () => { void bootstrap(); } }), [user, status, error, logoutPending, login, register, logout, bootstrap]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

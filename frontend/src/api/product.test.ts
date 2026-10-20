@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { addWorkspaceMember, createNote, createTask, createWorkspace, deleteNote, deleteTask, getUser, listProjectTasks, listTaskNotes, listUserWorkspaces, removeWorkspaceMember, transferWorkspaceOwnership, updateNote, updateTask } from "./product";
+import { addWorkspaceMember, createNote, createTask, createWorkspace, deleteNote, deleteTask, dismissNotification, getUnreadNotificationCount, getUser, listMyTasks, listNotifications, listProjectTasks, listTaskActivity, listTaskNotes, listUserWorkspaces, markAllNotificationsRead, removeWorkspaceMember, setNotificationRead, transferWorkspaceOwnership, updateNote, updateTask } from "./product";
 import { StrataApiError } from "./strata";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -49,9 +49,9 @@ describe("product API client", () => {
       .mockResolvedValueOnce(jsonResponse({ workspace_id: 3, owner_user_id: 8, previous_owner_user_id: 1 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
-    await createWorkspace("Team"); await addWorkspaceMember(3, 8); await transferWorkspaceOwnership(3, 8); await removeWorkspaceMember(3, 1);
+    await createWorkspace("Team"); await addWorkspaceMember(3, "ada@strata.local"); await transferWorkspaceOwnership(3, 8); await removeWorkspaceMember(3, 1);
     expect(fetchMock.mock.calls[0]).toEqual(["/api/workspaces", expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Team" }) })]);
-    expect(fetchMock.mock.calls[1]).toEqual(["/api/workspaces/3/members", expect.objectContaining({ method: "POST", body: JSON.stringify({ user_id: 8 }) })]);
+    expect(fetchMock.mock.calls[1]).toEqual(["/api/workspaces/3/members", expect.objectContaining({ method: "POST", body: JSON.stringify({ email: "ada@strata.local" }) })]);
     expect(fetchMock.mock.calls[2]).toEqual(["/api/workspaces/3/transfer-ownership", expect.objectContaining({ method: "POST", body: JSON.stringify({ new_owner_user_id: 8 }) })]);
     expect(fetchMock.mock.calls[3]).toEqual(["/api/workspaces/3/members/1", { method: "DELETE" }]);
   });
@@ -63,6 +63,30 @@ describe("product API client", () => {
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(["/api/tasks/2/notes", "/api/tasks/2/notes", "/api/notes/1", "/api/notes/1"]);
     expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: "POST", body: JSON.stringify({ content: "Note" }) });
     expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: "PATCH", body: JSON.stringify({ content: "Edited" }) });
+  });
+
+  it("serializes Scope C task queries and paging without empty parameters", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([])).mockResolvedValueOnce(jsonResponse({ items: [], total: 0, limit: 20, offset: 0 })).mockResolvedValueOnce(jsonResponse({ items: [], total: 0, limit: 50, offset: 0 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await listProjectTasks(7, { query: "release", priority: "HIGH", due_before: "2027-01-01", limit: 20, offset: 0 });
+    await listMyTasks({ workspace_id: 9, status: "TODO", sort: "due_asc", limit: 20, offset: 0 });
+    await listTaskActivity(9);
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      "/api/projects/7/tasks?query=release&priority=HIGH&due_before=2027-01-01&limit=20&offset=0",
+      "/api/my/tasks?workspace_id=9&status=TODO&sort=due_asc&limit=20&offset=0",
+      "/api/tasks/9/activity?limit=50&offset=0",
+    ]);
+  });
+
+  it("uses the notification list, count, read, mark-all, and dismissal contracts", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ items: [], total: 0, limit: 20, offset: 0 })).mockResolvedValueOnce(jsonResponse({ unread_count: 2 })).mockResolvedValueOnce(jsonResponse({ id: 3, is_read: true })).mockResolvedValueOnce(jsonResponse({ updated: 2 })).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await listNotifications({ unread_only: true, limit: 20, offset: 0 }); await getUnreadNotificationCount(); await setNotificationRead(3, true); await markAllNotificationsRead(); await dismissNotification(3);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/notifications?unread_only=true&limit=20&offset=0");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/notifications/unread-count");
+    expect(fetchMock.mock.calls[2]).toEqual(["/api/notifications/3", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ is_read: true }) })]);
+    expect(fetchMock.mock.calls[3]).toEqual(["/api/notifications/mark-all-read", { method: "POST" }]);
+    expect(fetchMock.mock.calls[4]).toEqual(["/api/notifications/3", { method: "DELETE" }]);
   });
 });
 

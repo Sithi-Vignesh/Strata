@@ -1,19 +1,22 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listProjectTasks, listUserWorkspaces, listWorkspaceMembers, listWorkspaceProjects } from "../api/product";
+import { StrataApiError } from "../api/strata";
 import type { Project, Task, User, Workspace, WorkspaceMember } from "../types/product";
 
 type ProductState = { workspaces: Workspace[]; projects: Project[]; members: WorkspaceMember[]; memberUsers: Record<number, User>; tasks: Task[]; workspaceTasks: Record<number, Task[]>; selectedWorkspaceId: number | null; selectedProjectId: number | null; status: "loading" | "ready" | "error"; error: Error | null; };
-type ProductContextValue = ProductState & { currentUser: User; selectWorkspace: (workspaceId: number) => void; selectProject: (projectId: number) => void; retry: () => void; refreshTasks: () => Promise<void>; refreshWorkspace: () => Promise<void>; };
+type ProductContextValue = ProductState & { currentUser: User; selectWorkspace: (workspaceId: number) => void; selectProject: (projectId: number) => void; retry: () => void; refreshTasks: () => Promise<void>; refreshWorkspace: (selection?: { workspaceId?: number; projectId?: number }) => Promise<void>; };
 const ProductContext = createContext<ProductContextValue | null>(null);
 const initialState: ProductState = { workspaces: [], projects: [], members: [], memberUsers: {}, tasks: [], workspaceTasks: {}, selectedWorkspaceId: null, selectedProjectId: null, status: "loading", error: null };
 
 export function ProductProvider({ children, user }: { children: ReactNode; user: User }) {
   const [state, setState] = useState<ProductState>(initialState);
   const requestVersion = useRef(0);
+  const selectedProjectId = useRef<number | null>(null);
   const workspaceKey = `strata.user.${user.id}.selectedWorkspaceId`;
   const projectKey = `strata.user.${user.id}.selectedProjectId`;
   const loadWorkspace = useCallback(async (workspaceId: number, preferredProjectId?: number | null) => {
     const version = ++requestVersion.current;
+    selectedProjectId.current = null;
     setState((current) => ({ ...current, status: "loading", error: null, selectedWorkspaceId: workspaceId, projects: [], members: [], memberUsers: {}, tasks: [], workspaceTasks: {}, selectedProjectId: null }));
     try {
       const [projects, members] = await Promise.all([listWorkspaceProjects(workspaceId), listWorkspaceMembers(workspaceId)]);
@@ -23,26 +26,27 @@ export function ProductProvider({ children, user }: { children: ReactNode; user:
       const workspaceTasks = Object.fromEntries(taskLists);
       const projectId = chooseId(projects, preferredProjectId ?? readStoredId(projectKey));
       if (projectId === null) { persistId(projectKey, null); setState((current) => ({ ...current, projects, members, memberUsers: userMap(members), workspaceTasks, selectedProjectId: null, tasks: [], status: "ready" })); return; }
+      selectedProjectId.current = projectId;
       persistId(projectKey, projectId);
       setState((current) => ({ ...current, projects, members, memberUsers: userMap(members), workspaceTasks, selectedProjectId: projectId, tasks: workspaceTasks[projectId] ?? [], status: "ready" }));
     } catch (error) { if (version === requestVersion.current) setState((current) => ({ ...current, status: "error", error: asError(error) })); }
   }, [projectKey]);
-  const initialize = useCallback(async () => {
-    const version = ++requestVersion.current; setState(initialState);
+  const initialize = useCallback(async (preferredWorkspaceId?: number, preferredProjectId?: number) => {
+    const version = ++requestVersion.current; selectedProjectId.current = null; setState(initialState);
     try {
       const workspaces = await listUserWorkspaces(user.id);
       if (version !== requestVersion.current) return;
-      const workspaceId = chooseId(workspaces, readStoredId(workspaceKey));
+      const workspaceId = chooseId(workspaces, preferredWorkspaceId ?? readStoredId(workspaceKey));
       if (workspaceId === null) { persistId(workspaceKey, null); setState({ ...initialState, workspaces, status: "ready" }); return; }
-      persistId(workspaceKey, workspaceId); setState((current) => ({ ...current, workspaces, selectedWorkspaceId: workspaceId })); await loadWorkspace(workspaceId);
+      persistId(workspaceKey, workspaceId); setState((current) => ({ ...current, workspaces, selectedWorkspaceId: workspaceId })); await loadWorkspace(workspaceId, preferredProjectId);
     } catch (error) { if (version === requestVersion.current) setState((current) => ({ ...current, status: "error", error: asError(error) })); }
   }, [loadWorkspace, user.id, workspaceKey]);
   useEffect(() => { void initialize(); }, [initialize]);
   const selectWorkspace = useCallback((workspaceId: number) => { persistId(workspaceKey, workspaceId); void loadWorkspace(workspaceId, null); }, [loadWorkspace, workspaceKey]);
   const selectProject = useCallback((projectId: number) => { if (state.selectedWorkspaceId === null || !state.projects.some((project) => project.id === projectId)) return; persistId(projectKey, projectId); void loadWorkspace(state.selectedWorkspaceId, projectId); }, [loadWorkspace, projectKey, state.projects, state.selectedWorkspaceId]);
-  const refreshTasks = useCallback(async () => { const projectId = state.selectedProjectId; if (projectId === null) return; const version = ++requestVersion.current; setState((current) => ({ ...current, status: "loading", error: null })); try { const tasks = await listProjectTasks(projectId); if (version === requestVersion.current) setState((current) => ({ ...current, tasks, workspaceTasks: { ...current.workspaceTasks, [projectId]: tasks }, status: "ready" })); } catch (error) { const taskError = asError(error); if (version === requestVersion.current) setState((current) => ({ ...current, status: "error", error: taskError })); throw taskError; } }, [state.selectedProjectId]);
-  const refreshWorkspace = useCallback(async () => { await initialize(); }, [initialize]);
-  const value = useMemo(() => ({ ...state, currentUser: user, selectWorkspace, selectProject, retry: initialize, refreshTasks, refreshWorkspace }), [state, user, selectWorkspace, selectProject, initialize, refreshTasks, refreshWorkspace]);
+  const refreshTasks = useCallback(async () => { const projectId = state.selectedProjectId; if (projectId === null || projectId !== selectedProjectId.current) return; const version = ++requestVersion.current; setState((current) => ({ ...current, status: "loading", error: null })); try { const tasks = await listProjectTasks(projectId); if (version === requestVersion.current && projectId === selectedProjectId.current) setState((current) => ({ ...current, tasks, workspaceTasks: { ...current.workspaceTasks, [projectId]: tasks }, status: "ready" })); } catch (error) { const taskError = asError(error); if (version === requestVersion.current && projectId === selectedProjectId.current) { if (error instanceof StrataApiError && (error.status === 401 || error.status === 403)) { selectedProjectId.current = null; setState((current) => ({ ...current, projects: [], members: [], memberUsers: {}, tasks: [], workspaceTasks: {}, selectedProjectId: null, status: "error", error: taskError })); } else setState((current) => ({ ...current, status: "error", error: taskError })); } throw taskError; } }, [state.selectedProjectId]);
+  const refreshWorkspace = useCallback(async (selection?: { workspaceId?: number; projectId?: number }) => { await initialize(selection?.workspaceId, selection?.projectId); }, [initialize]);
+  const value = useMemo(() => ({ ...state, currentUser: user, selectWorkspace, selectProject, retry: () => { void initialize(); }, refreshTasks, refreshWorkspace }), [state, user, selectWorkspace, selectProject, initialize, refreshTasks, refreshWorkspace]);
   return <ProductContext.Provider value={value}>{children}</ProductContext.Provider>;
 }
 export function useProduct() { const value = useContext(ProductContext); if (value === null) throw new Error("useProduct must be used within ProductProvider."); return value; }

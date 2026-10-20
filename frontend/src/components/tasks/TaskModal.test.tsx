@@ -25,12 +25,38 @@ describe("TaskModal", () => {
     await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(task, { description: null, assignee_user_id: null }));
   });
 
-  it("keeps the form open when a save succeeds but the task refresh fails", async () => {
+  it("keeps the form open when its caller reports that the mutation did not commit", async () => {
     const onCreate = vi.fn().mockResolvedValue(false);
     render(<TaskModal memberUsers={members} onClose={vi.fn()} onCreate={onCreate} onUpdate={vi.fn()} task={null} />);
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Follow up" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await waitFor(() => expect(onCreate).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("creates with a due date and clears an existing due date explicitly", async () => {
+    const onCreate = vi.fn().mockResolvedValue(true), onUpdate = vi.fn().mockResolvedValue(true);
+    render(<TaskModal memberUsers={members} onClose={vi.fn()} onCreate={onCreate} onUpdate={onUpdate} task={null} />);
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Dated work" } });
+    fireEvent.change(screen.getByLabelText(/Due date/), { target: { value: "2027-02-28" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ due_date: "2027-02-28" })));
+    cleanup();
+    render(<TaskModal memberUsers={members} onClose={vi.fn()} onCreate={onCreate} onUpdate={onUpdate} task={{ ...task, due_date: "2027-02-28" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Clear due date" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(expect.anything(), { due_date: null }));
+  });
+
+  it("submits a handoff only for a real reassignment and preserves it after failure", async () => {
+    const onUpdate = vi.fn().mockResolvedValue(false);
+    render(<TaskModal memberUsers={{ ...members, 2: { id: 2, name: "Ada", email: "ada@strata.local" } }} onClose={vi.fn()} onCreate={vi.fn()} onUpdate={onUpdate} task={task} />);
+    expect(screen.queryByLabelText(/Handoff note/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Assignee"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText(/Handoff note/), { target: { value: "Start with the checklist." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(task, { assignee_user_id: 2, handoff_note: "Start with the checklist." }));
+    expect(screen.getByLabelText(/Handoff note/)).toHaveValue("Start with the checklist.");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 

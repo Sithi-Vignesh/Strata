@@ -90,7 +90,7 @@ export function SqlConsolePage() {
 
   return (
     <section className="max-w-6xl">
-      <PageHeader description="Run SQL directly against the Strata database workload." title="SQL Console" />
+      <PageHeader eyebrow="Developer tools" description="Run SQL directly against the Strata database workload and inspect the real execution profile." title="SQL Lab" />
 
       <section aria-labelledby="sql-editor-heading" className="mt-6 rounded-md border border-[var(--strata-border)] bg-[var(--strata-surface)] p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
